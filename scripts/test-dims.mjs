@@ -35,12 +35,12 @@ const fakeOsh = (docs) => ({ request: async (method, url) => {
   if (url.includes("/features")) return { features: [sketchWith([realDistance("p1", "p2")])] };
   throw new Error("unexpected " + url);
 } });
-assert.equal(await learn(fakeOsh([{ id: "D1" }])), null);                         // document has no default workspace: nothing found
+assert.equal(await learn(fakeOsh([{ id: "D1" }]), { pauseMs: 0 }), null);                         // document has no default workspace: nothing found
 assert.equal(loadLearned(), null);
-calls = 0; assert.equal(await learn(fakeOsh([{ id: "D1", defaultWorkspace: { id: "W1" } }])), null); assert.equal(calls, 0, "a failed search is not repeated within a day");
-const learned = await learn(fakeOsh([{ id: "D1", defaultWorkspace: { id: "W1" } }]), { force: true });
+calls = 0; assert.equal(await learn(fakeOsh([{ id: "D1", defaultWorkspace: { id: "W1" } }]), { pauseMs: 0 }), null); assert.equal(calls, 0, "a failed search is not repeated within a day");
+const learned = await learn(fakeOsh([{ id: "D1", defaultWorkspace: { id: "W1" } }]), { force: true, pauseMs: 0 });
 assert.equal(learned.distance_pp.constraintType, "DISTANCE"); assert.deepEqual(loadLearned().distance_pp, learned.distance_pp);
-calls = 0; await learn(fakeOsh([])); assert.equal(calls, 0, "once learned, no more searching");
+calls = 0; await learn(fakeOsh([]), { pauseMs: 0 }); assert.equal(calls, 0, "once learned, no more searching");
 
 // ---- 3. our dimension from the learned format ----
 const d = makeDistance(learned.distance_pp, "cs_origin", "e0.start", 25, "VERTICAL");

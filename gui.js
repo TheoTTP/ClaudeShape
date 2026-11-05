@@ -12,6 +12,7 @@ import { claudeCandidates } from "./lib/claude-bin.js";
 import { DESIGN_RULES } from "./lib/agent.js";
 import { precreate, clearAll } from "./lib/doc.js";
 import { learn } from "./lib/learn.js";
+import { calibrateRevolve, applyRevolveCal } from "./lib/calib.js";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -241,13 +242,27 @@ app.post("/chat", async (req, res) => {
 app.post("/reset", (_req, res) => { killWorkers(); clearAll(); freshConversation = true; prewarm(); res.json({ ok: true }); });
 process.on("exit", () => killWorkers());
 
+// One-off checks of how this Onshape behaves, run quietly in the background and shown in the window.
+const selfTest = { revolve: "waiting" };
+app.get("/selftest", (_req, res) => res.json(selfTest));
+async function selfTestAll(o) {
+  applyRevolveCal();
+  const done = applyRevolveCal();
+  if (done?.variant) selfTest.revolve = "ok";
+  else {
+    selfTest.revolve = "running";
+    try { selfTest.revolve = (await calibrateRevolve(o)) ? "ok" : "failed"; } catch { selfTest.revolve = "failed"; }
+  }
+  await learn(o).catch(() => {});                                // then Onshape's dimension format (slowly, once)
+}
+
 const server = app.listen(PORT, "127.0.0.1", (err) => {
   if (err) return;   // Express 5 also calls this when the port is taken; the "error" handler below deals with that
   console.log(`ClaudeShape window on ${URL_}`);
   openWindow();
   clearAll();                                                  // a new window is a new conversation
   prewarm();                                             // start Claude now so the first message is fast
-  const k = loadKeys(); if (k) { const o = new Onshape(k); o.whoami().catch(() => {}); setTimeout(() => learn(o).catch(() => {}), 4000); }   // warm the connection; learn Onshape's dimension format once, in the background
+  const k = loadKeys(); if (k) { const o = new Onshape(k); o.whoami().catch(() => {}); setTimeout(() => selfTestAll(o), 6000); }   // warm the connection; learn Onshape's dimension format once, in the background
   // Quit when the window is closed (it pings every 10 s).
   setInterval(() => { if (Date.now() - lastPing > IDLE_MS) process.exit(0); }, 5000).unref?.();
 });
