@@ -41,7 +41,7 @@ console.log("batch tests passed");
   const r1 = await runTool(ok, {}, "create_sketch", sk);
   assert.equal(r1.defined, "fully");
   const f = calls[0];
-  assert.ok(!("_fixOnly" in f), "internal fallback data is never sent to Onshape");
+  assert.ok(!("_fixOnly" in f) && !("_label" in f), "internal fallback data is never sent to Onshape");
   const count = (t) => f.constraints.filter((c) => c.constraintType === t).length;
   // rectangle: 4 joints, 2 horizontal, 2 vertical, width+height, 1 anchor; circle: anchored centre + radius
   assert.deepEqual([count("COINCIDENT"), count("HORIZONTAL"), count("VERTICAL"), count("LENGTH"), count("FIX"), count("RADIUS")], [4, 2, 2, 2, 2, 1]);
@@ -74,6 +74,18 @@ console.log("batch tests passed");
   calls.length = 0;
   const big = await runTool(ok, {}, "create_sketch", { plane: "top", shapes: [{ type: "text", text: "HELLO WORLD", height: 10 }] });
   assert.equal(calls[0].constraints.length, 0); assert.match(big.defined, /too large/);
+}
+// Onshape accepts the request but keeps no constraints -> that sketch is deleted and the next tier is tried
+{
+  const calls = [], deleted = [];
+  const os = { addFeature: async (_c, f) => { calls.push(f); const first = calls.length === 1; return { feature: { featureId: first ? "DROPPED" : "KEPT", constraints: first ? [] : f.constraints }, featureState: { featureStatus: "OK" } }; }, deleteFeature: async (_c, id) => { deleted.push(id); } };
+  const r = await runTool(os, {}, "create_sketch", { plane: "top", shapes: [{ type: "rectangle", width: 10, height: 10 }] });
+  assert.deepEqual(deleted, ["DROPPED"]); assert.equal(r.featureId, "KEPT"); assert.equal(r.defined, "locked");
+  // and the build summary tells the user how the sketches came out
+  calls.length = 0;
+  const os2 = { addFeature: async (_c, f) => { calls.push(f); return { feature: { featureId: "S" + calls.length, constraints: f.constraints }, featureState: { featureStatus: "OK" } }; }, deleteFeature: async () => ({}), getBoundingBox: async () => ({ lowX: 0, lowY: 0, lowZ: 0, highX: 0.01, highY: 0.01, highZ: 0.01 }) };
+  const b = await runTool(os2, {}, "build_steps", { preview: false, steps: [{ tool: "box", input: { width: 10, depth: 10, height: 5 } }, { tool: "create_sketch", input: { plane: "top", shapes: [{ type: "polygon", points: [[0, 0], [5, 0], [0, 5]] }] } }] });
+  assert.equal(b.sketches, "1 fully defined, 1 locked in place");
 }
 console.log("sketch-definition tests passed");
 

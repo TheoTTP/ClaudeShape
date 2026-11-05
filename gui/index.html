@@ -105,7 +105,7 @@ async function send(text){
   // timer line at the top of the response: ticks while working, then reads "Done in …"
   const t0=performance.now(),timer=step("Working… 0s");timer.className="timing";
   const tick=setInterval(()=>{timer.textContent="Working… "+fmtTime(performance.now()-t0)},1000);
-  let failed=false,gotResult=false,turnIds=new Set(),slowest="",detail="",openBtn=null,onshapeMs=0;
+  let failed=false,sketchNote="",gotResult=false,turnIds=new Set(),slowest="",detail="",openBtn=null,onshapeMs=0;
   const think=step("Thinking");think.className="step dots";
   try{
     const r=await fetch("/chat",{method:"POST",headers:H,body:JSON.stringify({prompt:text,session})});
@@ -115,6 +115,7 @@ async function send(text){
         if(e.session_id)session=e.session_id;
         // the document link appears the moment Claude's tools create it, so you can watch it build
         if(!openBtn){const m=line.match(ONSHAPE);if(m){openBtn=document.createElement("a");openBtn.className="open early";openBtn.href=m[0];openBtn.target="_blank";openBtn.rel="noopener";openBtn.textContent="Open in Onshape ↗";timer.after(openBtn)}}
+        {const m=line.match(/sketches\\?"\s*:\s*\\?"([^"\\]+)/);if(m)sketchNote=m[1]}
         {const m=line.match(/slowest\\?"\s*:\s*\\?"([^"\\]+)/);if(m)slowest=m[1]}
         for(const m of line.matchAll(/onshape_ms\\?"\s*:\s*(\d+)/g))onshapeMs+=+m[1];
         if(e.type==="assistant")turnIds.add(e.message?.id||("e"+turnIds.size));
@@ -128,6 +129,7 @@ async function send(text){
     if(final&&!ai)render(bubble("ai",""),final,!!openBtn);
   }catch(err){failed=true;think.remove();bubble("ai err",err.message)}
   clearInterval(tick);
+  if(sketchNote&&!/^\d+ fully defined$/.test(sketchNote)){const n=step("Sketches: "+sketchNote);n.className="step note";timer.after(n)}
   if(gotResult){const total=performance.now()-t0;detail=" · Claude "+fmtTime(Math.max(0,total-onshapeMs))+(onshapeMs?" · Onshape "+fmtTime(onshapeMs)+(slowest?" (slowest: "+slowest+")":""):"")+(turnIds.size?" · "+turnIds.size+" turn"+(turnIds.size>1?"s":""):"")}
   timer.textContent=(failed?"Stopped after ":"Done in ")+fmtTime(performance.now()-t0)+(failed?"":detail);timer.classList.add(failed?"bad":"ok");
   go.disabled=false;p.focus();
