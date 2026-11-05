@@ -51,7 +51,9 @@ irm https://raw.githubusercontent.com/TheoTTP/ClaudeShape/claude/focused-turing-
 The installer sets up Git, Node.js and Claude Code if they're missing, downloads ClaudeShape, and creates an app
 (Mac: `~/Applications/ClaudeShape.app`; Windows: a Desktop and Start menu shortcut). Opening it shows a chat window.
 First run: paste an Onshape API key in the window, and sign in to Claude Code once (`claude` in a terminal).
-The app updates itself from GitHub each time it opens. These links only work while the repository is public.
+**Claude login:** ClaudeShape uses the Claude Code that ships inside the Claude desktop app if it finds one (so anyone signed in to the desktop app's Code tab is already set), otherwise the `claude` command.
+
+**Updates:** every time the app opens it fetches the latest version from GitHub (`scripts/update.mjs`); offline just skips it. The `UPDATE_CHANNEL` file names the branch everyone follows, so changing it moves all installs to a new branch (e.g. `main`). Installs made by the installer always take the latest. These links only work while the repository is public.
 
 ## Desktop window (no terminal)
 

@@ -20,14 +20,20 @@ Write-Host "==> Checking Node.js"
 $nodeOk = $false
 if (Have node) { $nodeOk = ([int]((node -p "process.versions.node.split('.')[0]")) -ge 20) }
 if (-not $nodeOk) { Winget "OpenJS.NodeJS.LTS" }
-Write-Host "==> Checking Claude Code"
-if (-not (Have claude)) { irm https://claude.ai/install.ps1 | iex; Refresh-Path }
-
 Write-Host "==> Downloading ClaudeShape"
 if (Test-Path (Join-Path $Dir ".git")) {
-  git -C $Dir stash -q; git -C $Dir fetch -q origin $Ref; git -C $Dir checkout -q $Ref; git -C $Dir pull -q --ff-only origin $Ref
+  git -C $Dir fetch -q origin $Ref; git -C $Dir stash -q; git -C $Dir checkout -q -B $Ref FETCH_HEAD
 } else { git clone -q -b $Ref $Repo $Dir }
-Push-Location $Dir; npm install --silent; Pop-Location
+Push-Location $Dir; npm install --silent
+New-Item -ItemType File -Force -Path (Join-Path $Dir ".git\claudeshape-managed") | Out-Null   # friend install: updates always win
+Write-Host "==> Looking for Claude"
+$found = (node lib/claude-bin.js --check)
+if ($found) { Write-Host "Using $found" }
+else {
+  Write-Host "No Claude desktop app or Claude Code found. Installing Claude Code (you can also install the Claude desktop app from claude.com/download)."
+  irm https://claude.ai/install.ps1 | iex; Refresh-Path
+}
+Pop-Location
 
 Write-Host "==> Creating the ClaudeShape shortcut"
 $ws = New-Object -ComObject WScript.Shell
@@ -46,5 +52,6 @@ Write-Host @"
 All set. A ClaudeShape shortcut is on your Desktop and in the Start menu.
 The first time you open it:
   1. It asks you to paste an Onshape API key (it walks you through making one).
-  2. Claude Code must be signed in once: open PowerShell, type  claude  and log in with your Claude account.
+  2. Claude must be signed in: open the Claude desktop app, sign in, and open its Code tab once.
+     (No desktop app? Open PowerShell, type  claude  and log in.)
 "@

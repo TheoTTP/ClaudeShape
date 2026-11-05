@@ -24,13 +24,18 @@ if [ $need_node = 1 ]; then
   else echo "Install Node.js (the LTS version) from https://nodejs.org , then run this installer again."; exit 1; fi
 fi
 
-say "Checking Claude Code"
-if ! command -v claude >/dev/null; then curl -fsSL https://claude.ai/install.sh | bash; fi
-
 say "Downloading ClaudeShape"
-if [ -d "$DIR/.git" ]; then git -C "$DIR" stash -q || true; git -C "$DIR" fetch -q origin "$REF"; git -C "$DIR" checkout -q "$REF" 2>/dev/null || git -C "$DIR" checkout -q -B "$REF" "origin/$REF"; git -C "$DIR" pull -q --ff-only origin "$REF"
+if [ -d "$DIR/.git" ]; then git -C "$DIR" fetch -q origin "$REF"; git -C "$DIR" stash -q || true; git -C "$DIR" checkout -q -B "$REF" FETCH_HEAD
 else git clone -q -b "$REF" "$REPO" "$DIR"; fi
 (cd "$DIR" && npm install --silent)
+touch "$DIR/.git/claudeshape-managed"   # marks this as a friend install: updates always win
+
+say "Looking for Claude"
+FOUND="$(cd "$DIR" && node lib/claude-bin.js --check)"
+if [ -n "$FOUND" ]; then echo "Using $FOUND"
+else echo "No Claude desktop app or Claude Code found. Installing Claude Code (you can also install the Claude desktop app from claude.com/download)."
+  curl -fsSL https://claude.ai/install.sh | bash
+fi
 
 if [ "$(uname)" = "Darwin" ]; then
   say "Creating the ClaudeShape app"
@@ -50,7 +55,8 @@ cat <<'MSG'
 
 All set. Two things happen the first time you open ClaudeShape:
   1. It asks you to paste an Onshape API key (it walks you through making one).
-  2. Claude Code must be signed in once: open Terminal, type  claude  and log in with your Claude account.
+  2. Claude must be signed in: open the Claude desktop app, sign in, and open its Code tab once.
+     (No desktop app? Open Terminal, type  claude  and log in.)
 
 If macOS says the app can't be verified, right-click it, choose Open, then Open again.
 MSG
