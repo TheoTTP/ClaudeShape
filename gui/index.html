@@ -19,6 +19,7 @@
   .ai{white-space:normal;align-self:flex-start;background:var(--card);border:1px solid var(--line);border-bottom-left-radius:4px}
   .step{align-self:flex-start;color:var(--mut);font-size:13px;padding:0 6px}
   .err{color:var(--err)}
+  .timing{align-self:flex-start;font-size:13px;font-weight:600;color:var(--mut);padding:0 6px}.timing.ok{color:var(--acc)}.timing.bad{color:var(--err)}
   .open{display:inline-block;margin-top:8px;background:var(--acc);color:#fff;text-decoration:none;padding:7px 14px;border-radius:9px;font-weight:600}
   .hero{margin:auto;text-align:center;color:var(--mut)}.hero img{height:110px;margin-bottom:10px}
   .chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px}
@@ -89,8 +90,14 @@ function render(el,text){
     inline(para,line.trim())}
   const links=text.match(ONSHAPE);
   if(links){const a=document.createElement("a");a.className="open";a.href=links[links.length-1];a.target="_blank";a.rel="noopener";a.textContent="Open in Onshape ↗";el.append(a)}}
+const fmtTime=ms=>{const t=ms/1000;if(t<10)return t.toFixed(1)+"s";const m=Math.floor(t/60),sec=Math.round(t%60);return m?`${m}m ${sec}s`:Math.round(t)+"s"};
 async function send(text){
-  go.disabled=true;bubble("me",text);const think=step("Thinking");think.className="step dots";
+  go.disabled=true;bubble("me",text);
+  // timer line at the top of the response: ticks while working, then reads "Done in …"
+  const t0=performance.now(),timer=step("Working… 0s");timer.className="timing";
+  const tick=setInterval(()=>{timer.textContent="Working… "+fmtTime(performance.now()-t0)},1000);
+  let failed=false;
+  const think=step("Thinking");think.className="step dots";
   try{
     const r=await fetch("/chat",{method:"POST",headers:H,body:JSON.stringify({prompt:text,session})});
     const rd=r.body.getReader(),dec=new TextDecoder();let buf="",ai=null,final=null;
@@ -100,12 +107,14 @@ async function send(text){
         if(e.type==="assistant"){for(const c of e.message?.content||[]){
           if(c.type==="tool_use"){think.remove();const n=c.name.replace(/^mcp__claudeshape__/,"");step("• "+(FRIENDLY[n]||n)+"…")}
           if(c.type==="text"&&c.text.trim()){think.remove();ai=ai||bubble("ai","");ai.dataset.t=(ai.dataset.t?ai.dataset.t+"\n\n":"")+c.text.trim();render(ai,ai.dataset.t)}}}
-        if(e.type==="result"){final=e.result;if(e.is_error)bubble("ai err",e.result||"Something went wrong.")}
-        if(e.type==="gui_error")bubble("ai err",e.message);
+        if(e.type==="result"){final=e.result;if(e.is_error){failed=true;bubble("ai err",e.result||"Something went wrong.")}}
+        if(e.type==="gui_error"){failed=true;bubble("ai err",e.message)}
       }}
     think.remove();
     if(final&&!ai)render(bubble("ai",""),final);
-  }catch(err){think.remove();bubble("ai err",err.message)}
+  }catch(err){failed=true;think.remove();bubble("ai err",err.message)}
+  clearInterval(tick);
+  timer.textContent=(failed?"Stopped after ":"Done in ")+fmtTime(performance.now()-t0);timer.classList.add(failed?"bad":"ok");
   go.disabled=false;p.focus();
 }
 document.getElementById("f").onsubmit=e=>{e.preventDefault();const t=p.value.trim();if(!t||go.disabled)return;p.value="";send(t)};
