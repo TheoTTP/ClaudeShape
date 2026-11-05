@@ -41,7 +41,7 @@ console.log("batch tests passed");
   const r1 = await runTool(ok, {}, "create_sketch", sk);
   assert.equal(r1.defined, "fully");
   const f = calls[0];
-  assert.ok(!("_fixOnly" in f) && !("_label" in f), "internal fallback data is never sent to Onshape");
+  assert.ok(!("_label" in f), "internal fields are never sent to Onshape");
   const count = (t) => f.constraints.filter((c) => c.constraintType === t).length;
   // rectangle: 4 joints, 2 horizontal, 2 vertical, width+height, 1 anchor; circle: anchored centre + radius
   assert.deepEqual([count("COINCIDENT"), count("HORIZONTAL"), count("VERTICAL"), count("LENGTH"), count("FIX"), count("RADIUS")], [4, 2, 2, 2, 2, 1]);
@@ -50,42 +50,53 @@ console.log("batch tests passed");
   assert.deepEqual(len, ["10 mm", "20 mm"]);
   assert.equal(f.constraints.find((c) => c.constraintType === "RADIUS").parameters[1].expression, "2 mm");
 
-  // shapes without a parametric recipe (polygon) are locked entity by entity
-  calls.length = 0;
-  await runTool(ok, {}, "create_sketch", { plane: "top", shapes: [{ type: "polygon", points: [[0, 0], [5, 0], [0, 5]] }] });
-  assert.equal(calls[0].constraints.length, 3); assert.ok(calls[0].constraints.every((c) => c.constraintType === "FIX"));
+  // every shape is fully constrained (only joint / anchor / dimension constraints; entity-locking was shown NOT to define a sketch)
+  const cons = async (shapes) => { calls.length = 0; await runTool(ok, {}, "create_sketch", { plane: "top", shapes }); const c = {}; calls[0].constraints.forEach((x) => (c[x.constraintType] = (c[x.constraintType] || 0) + 1)); return c; };
+  assert.deepEqual(await cons([{ type: "polygon", points: [[0, 0], [5, 0], [0, 5]] }]), { COINCIDENT: 3, FIX: 3 });          // 3 joints, 3 anchored corners
+  assert.deepEqual(await cons([{ type: "regular_polygon", sides: 6, r: 10 }]), { COINCIDENT: 6, FIX: 6 });
+  assert.deepEqual(await cons([{ type: "slot", length: 18, width: 9 }]), { COINCIDENT: 4, FIX: 4, RADIUS: 2 });              // 2 lines + 2 arcs
+  assert.deepEqual(await cons([{ type: "arc", r: 10, start_deg: 0, end_deg: 90 }]), { FIX: 2, RADIUS: 1 });
+  assert.deepEqual(await cons([{ type: "line", x1: 0, y1: 0, x2: 0, y2: 30, construction: true, id: "axis" }]), { FIX: 2 });
+  const round4 = [{ type: "path", close: true, start: [5, 0], segments: [{ to: [35, 0] }, { to: [40, 5], radius: 5 }, { to: [40, 15] }, { to: [35, 20], radius: 5 }, { to: [5, 20] }, { to: [0, 15], radius: 5 }, { to: [0, 5] }, { to: [5, 0], radius: 5 }] }];
+  assert.deepEqual(await cons(round4), { COINCIDENT: 8, FIX: 8, RADIUS: 4 });                                                  // rounded rectangle
+  assert.deepEqual(await cons([{ type: "path", start: [0, 0], segments: [{ to: [5, 0] }, { to: [8, 3], radius: 3 }] }]), { COINCIDENT: 1, FIX: 3, RADIUS: 1 });   // open chain
+  // clockwise arcs join the right ends (traversal start = entity end)
+  await cons([{ type: "path", start: [5, 0], segments: [{ to: [0, 5], radius: 5, clockwise: true }, { to: [0, 15] }, { to: [5, 20], radius: 5, clockwise: true }, { to: [35, 20] }, { to: [40, 15], radius: 5, clockwise: true }, { to: [40, 5] }, { to: [35, 0], radius: 5, clockwise: true }, { to: [5, 0] }] }]);
+  const pairs = calls[0].constraints.filter((c) => c.constraintType === "COINCIDENT").map((c) => c.parameters.map((q) => q.value).sort().join("~"));
+  assert.ok(pairs.includes("e0.start~e1.start"), "walk leaves the first (clockwise) arc through its entity START");
+  assert.ok(pairs.includes("e0.end~e7.end"), "and enters it through its entity END");
 
-  // tier 1 throws -> tier 2 (everything locked) -> tier 3 (plain)
+  // if Onshape throws on the constraints -> the sketch is still created, plain
   calls.length = 0;
-  const tiered = (failTiers) => ({ addFeature: async (_c, f) => { calls.push(f); const idx = calls.length - 1; if (idx < failTiers) throw new Error("400"); return respond("S" + calls.length); }, deleteFeature: async () => ({}) });
-  const r2 = await runTool(tiered(1), {}, "create_sketch", sk);
-  assert.equal(r2.defined, "locked"); assert.ok(calls[1].constraints.every((c) => c.constraintType === "FIX")); assert.equal(calls[1].constraints.length, calls[1].entities.length);
-  calls.length = 0;
-  const r3 = await runTool(tiered(2), {}, "create_sketch", sk);
-  assert.match(r3.defined, /^no/); assert.equal(calls[2].constraints.length, 0);
+  const thr = { addFeature: async (_c, f) => { calls.push(f); if (f.constraints.length) throw new Error("400"); return respond("S2"); }, deleteFeature: async () => ({}) };
+  const r2 = await runTool(thr, {}, "create_sketch", sk);
+  assert.equal(calls.length, 2); assert.equal(calls[1].constraints.length, 0); assert.match(r2.defined, /^no/); assert.equal(r2.featureId, "S2");
 
-  // accepted but ERROR -> bad sketch deleted, next tier tried
+  // accepted but ERROR -> bad sketch deleted, retried plain
   calls.length = 0; const deleted = [];
-  const errs = { addFeature: async (_c, f) => { calls.push(f); const bad = calls.length === 1; return respond(bad ? "BAD" : "GOOD", bad ? "ERROR" : "OK"); }, deleteFeature: async (_c, id) => { deleted.push(id); } };
+  const errs = { addFeature: async (_c, f) => { calls.push(f); const bad = f.constraints.length > 0; return respond(bad ? "BAD" : "GOOD", bad ? "ERROR" : "OK"); }, deleteFeature: async (_c, id) => { deleted.push(id); } };
   const r4 = await runTool(errs, {}, "create_sketch", sk);
-  assert.deepEqual(deleted, ["BAD"]); assert.equal(r4.featureId, "GOOD"); assert.equal(r4.defined, "locked");
+  assert.deepEqual(deleted, ["BAD"]); assert.equal(r4.featureId, "GOOD"); assert.match(r4.defined, /^no/);
 
-  // big sketches (e.g. text) skip constraints so Onshape stays fast
+  // large sketches (> 600 entities) skip constraints so Onshape stays fast; normal text keeps them
   calls.length = 0;
-  const big = await runTool(ok, {}, "create_sketch", { plane: "top", shapes: [{ type: "text", text: "HELLO WORLD", height: 10 }] });
+  const txt = await runTool(ok, {}, "create_sketch", { plane: "top", shapes: [{ type: "text", text: "HELLO WORLD", height: 10 }] });
+  assert.ok(calls[0].constraints.length > 0); assert.equal(txt.defined, "fully");
+  calls.length = 0;
+  const big = await runTool(ok, {}, "create_sketch", { plane: "top", shapes: [{ type: "text", text: "THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG AGAIN AND AGAIN", height: 10 }] });
   assert.equal(calls[0].constraints.length, 0); assert.match(big.defined, /too large/);
 }
-// Onshape accepts the request but keeps no constraints -> that sketch is deleted and the next tier is tried
+// Onshape accepts the request but keeps no constraints -> that sketch is deleted and re-added plain
 {
   const calls = [], deleted = [];
   const os = { addFeature: async (_c, f) => { calls.push(f); const first = calls.length === 1; return { feature: { featureId: first ? "DROPPED" : "KEPT", constraints: first ? [] : f.constraints }, featureState: { featureStatus: "OK" } }; }, deleteFeature: async (_c, id) => { deleted.push(id); } };
   const r = await runTool(os, {}, "create_sketch", { plane: "top", shapes: [{ type: "rectangle", width: 10, height: 10 }] });
-  assert.deepEqual(deleted, ["DROPPED"]); assert.equal(r.featureId, "KEPT"); assert.equal(r.defined, "locked");
+  assert.deepEqual(deleted, ["DROPPED"]); assert.equal(r.featureId, "KEPT"); assert.match(r.defined, /^no/);
   // and the build summary tells the user how the sketches came out
   calls.length = 0;
   const os2 = { addFeature: async (_c, f) => { calls.push(f); return { feature: { featureId: "S" + calls.length, constraints: f.constraints }, featureState: { featureStatus: "OK" } }; }, deleteFeature: async () => ({}), getBoundingBox: async () => ({ lowX: 0, lowY: 0, lowZ: 0, highX: 0.01, highY: 0.01, highZ: 0.01 }) };
   const b = await runTool(os2, {}, "build_steps", { preview: false, steps: [{ tool: "box", input: { width: 10, depth: 10, height: 5 } }, { tool: "create_sketch", input: { plane: "top", shapes: [{ type: "polygon", points: [[0, 0], [5, 0], [0, 5]] }] } }] });
-  assert.equal(b.sketches, "1 fully defined, 1 locked in place");
+  assert.equal(b.sketches, "2 fully defined");
 }
 console.log("sketch-definition tests passed");
 
