@@ -73,6 +73,17 @@ const last = (ev) => ev.at(-1);
   const a = await s.chat("x"); assert.equal(last(a).type, "result"); assert.equal(last(a).lean, false);
   s.srv.kill();
 }
+// 4b. reference images are passed to Claude as image blocks ahead of the text; junk is dropped
+{
+  const s = await server();
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  const r = last(await s.post("/chat", { prompt: "make this", images: [{ media_type: "image/png", data: png }, { media_type: "text/html", data: png }, { media_type: "image/png", data: "not base64!!" }] }));
+  assert.ok(Array.isArray(r.got) && r.got.length === 2, "one valid image + the text");
+  assert.deepEqual(r.got[0], { type: "image", source: { type: "base64", media_type: "image/png", data: png } });
+  assert.deepEqual(r.got[1], { type: "text", text: "make this" });
+  assert.equal(last(await s.post("/chat", { prompt: "plain" })).got, "plain");        // no images: still a plain string
+  s.srv.kill();
+}
 // 4c. the Onshape document is created as soon as the first message arrives (not for follow-ups)
 {
   const hits = [];

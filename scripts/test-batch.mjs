@@ -422,3 +422,51 @@ console.log("part styling tests passed");
   assert.equal(bs.error, undefined); assert.equal(bs.built.length, 2);
 }
 console.log("edit feature tests passed");
+
+// ---- bend_tube: a curved tube whose thickness changes section by section ----
+{
+  const { expandMacro } = await import("../lib/agent.js");
+  const R = 600;
+  const secs = [{ length: 20, r: 14, name: "pommel", color: "silver" }, { length: 60, r: 12, name: "grip", color: "black" }, { length: 10, r: 15 }];
+  const steps = expandMacro({ tool: "bend_tube", input: { radius: R, sections: secs, name: "Hilt" } }, "h");
+  // built from the far end back: the last section first, the first section (no trim needed) last
+  assert.deepEqual(steps.filter((x) => x.tool === "revolve" && x.input.operation === "new").map((x) => x.input.name), ["Hilt 3", "Hilt grip", "Hilt pommel"]);
+  const deg = (mm) => +((mm / R) * 180 / Math.PI).toFixed(4);
+  const rev = (nm) => steps.find((x) => x.tool === "revolve" && x.input.name === nm).input;
+  assert.equal(rev("Hilt 3").angle, deg(90)); assert.equal(rev("Hilt grip").angle, deg(80)); assert.equal(rev("Hilt pommel").angle, deg(20));
+  assert.equal(rev("Hilt 3 trim").angle, deg(80)); assert.equal(rev("Hilt grip trim").angle, deg(20)); assert.equal(rev("Hilt 3 trim").operation, "remove");
+  assert.equal(steps.filter((x) => /trim$/.test(x.input.name || "")).length, 2, "the first section needs no trim");
+  const ring = steps.find((x) => x.tool === "create_sketch" && x.input.name === "Hilt grip profile").input.shapes;
+  assert.deepEqual(ring[0], { type: "circle", cx: 0, cy: 0, r: 12 }); assert.equal(ring[1].construction, true); assert.equal(ring[1].x1, R);
+  const trimSketch = steps.find((x) => x.input.name === "Hilt grip trim sketch").input.shapes[0];
+  assert.deepEqual([trimSketch.x, trimSketch.width], [-15, 30]);                                       // a little bigger than the section (r 12 + 3)
+  const styles = steps.filter((x) => x.tool === "style_part").map((x) => x.input);
+  assert.deepEqual(styles.map((x) => [x.name, x.color]), [["Hilt grip", "black"], ["Hilt pommel", "silver"]]);   // the unnamed, uncoloured section is not styled
+  assert.match(styles[0].feature_id, /^\$/);
+
+  // run it for real against a fake Onshape: no errors, bodies are new, the trims remove, parts are styled
+  const posted = [], meta = {}; let parts = [];
+  const os = {
+    addFeature: async (_c, f) => { posted.push(f); const id = "F" + posted.length; if (f.featureType === "revolve" && f.parameters.find((q) => q.parameterId === "operationType").value === "NEW") { parts = [...parts, "P" + (parts.length + 1)]; meta["P" + parts.length] = { Name: "", Appearance: { color: {}, opacity: 255 } }; } return { feature: { featureId: id, constraints: f.constraints }, featureState: { featureStatus: "OK" } }; },
+    getParts: async () => parts.map((partId) => ({ partId })), deleteFeature: async () => ({}),
+    getPartMetadata: async (_c, pid) => ({ properties: [{ name: "Name", propertyId: "n", value: meta[pid].Name }, { name: "Appearance", propertyId: "a", value: meta[pid].Appearance }] }),
+    updatePartMetadata: async (_c, pid, props) => { for (const q of props) { if (q.propertyId === "n") meta[pid].Name = q.value; else meta[pid].Appearance = q.value; } return {}; },
+    getBoundingBox: async () => ({ lowX: -0.015, lowY: -0.015, lowZ: 0, highX: 0.2, highY: 0.015, highZ: 0.09 }),
+  };
+  const r = await runTool(os, { eid: "E" }, "build_steps", { preview: false, steps: [{ tool: "bend_tube", input: { radius: R, sections: secs, name: "Hilt" } }] });
+  assert.equal(r.error, undefined); assert.equal(posted.filter((f) => f.featureType === "revolve").length, 3 + 2);
+  assert.deepEqual(Object.values(meta).map((m) => m.Name).sort(), ["Hilt grip", "Hilt pommel"].sort().concat([""]).sort());
+  const byName = Object.fromEntries(Object.values(meta).map((m) => [m.Name, m.Appearance.color]));
+  assert.deepEqual(byName["Hilt grip"], { red: 24, green: 24, blue: 27 }); assert.deepEqual(byName["Hilt pommel"], { red: 192, green: 192, blue: 198 });
+
+  // flip reverses the turning direction by reversing the bend axis
+  const axisDir = (flip) => { const a = expandMacro({ tool: "bend_tube", input: { radius: R, sections: secs, flip } }, "h").find((x) => x.tool === "create_sketch").input.shapes[1]; return Math.sign(a.y2 - a.y1); };
+  assert.equal(axisDir(false), 1); assert.equal(axisDir(true), -1);
+
+  // guards
+  const bad = (input) => runTool(os, {}, "build_steps", { preview: false, steps: [{ tool: "bend_tube", input }] });
+  assert.match((await bad({ sections: [] })).error, /needs sections/);
+  assert.match((await bad({ radius: 20, sections: [{ length: 10, r: 15 }] })).error, /bend radius must be larger/);
+  assert.match((await bad({ radius: 30, sections: [{ length: 200, r: 5 }] })).error, /turns .* degrees/);
+}
+console.log("bend tube tests passed");

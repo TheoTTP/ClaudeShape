@@ -67,7 +67,7 @@ function openWindow() {
 }
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "40mb" }));
 // This server can run Claude on your machine, so only our own window may talk to it:
 // custom header (forces a CORS preflight, which we never grant) + same-origin check.
 app.use((req, res, next) => {
@@ -182,7 +182,7 @@ function startWorker(mode, lean = true, bi = 0) {
 function prewarm(mode = MODEL) { if (persistOk && (!workers[mode] || workers[mode].dead)) startWorker(mode); }
 
 // Resolves true if the worker handled the request (or reported a failure), false if the caller should fall back.
-function viaWorker(res, prompt, mode) {
+function viaWorker(res, prompt, mode, images = []) {
   return new Promise((resolve) => {
     prewarm(mode);
     const w = workers[mode];
@@ -211,7 +211,10 @@ function viaWorker(res, prompt, mode) {
       fail();
     };
     res.on("close", () => { if (!finished) { try { w.child.kill(); } catch {} } });   // user closed the window mid-answer
-    try { w.child.stdin.write(JSON.stringify({ type: "user", message: { role: "user", content: prompt } }) + "\n"); }
+    const content = images.length
+      ? [...images.map((im) => ({ type: "image", source: { type: "base64", media_type: im.media_type, data: im.data } })), { type: "text", text: prompt }]
+      : prompt;
+    try { w.child.stdin.write(JSON.stringify({ type: "user", message: { role: "user", content } }) + "\n"); }
     catch { fail(); }
   });
 }
@@ -220,6 +223,9 @@ let freshConversation = true;
 app.post("/chat", async (req, res) => {
   const { session } = req.body || {};
   const prompt = typeof req.body?.prompt === "string" ? req.body.prompt : "";
+  // reference pictures the user attached: a few, small, real image types only
+  const images = (Array.isArray(req.body?.images) ? req.body.images : []).slice(0, 4)
+    .filter((im) => /^image\/(png|jpeg|webp|gif)$/.test(im?.media_type) && typeof im.data === "string" && /^[A-Za-z0-9+/=]+$/.test(im.data) && im.data.length < 8_000_000);
   if (!prompt?.trim()) return res.status(400).json({ error: "empty prompt" });
   if (anyBusy()) return res.status(409).json({ error: "Still working on the last message." });
   res.setHeader("Content-Type", "application/x-ndjson");
@@ -227,7 +233,8 @@ app.post("/chat", async (req, res) => {
   res.flushHeaders();
   // First message of a conversation: make the Onshape document now, while Claude is still thinking.
   if (freshConversation) { freshConversation = false; const k = loadKeys(); if (k) precreate(new Onshape(k)); }
-  if (persistOk && await viaWorker(res, prompt, MODEL)) return;
+  if (persistOk && await viaWorker(res, prompt, MODEL, images)) return;
+  if (images.length) res.write(JSON.stringify({ type: "gui_error", message: "Reference images could not be sent this time (Claude restarted in a simpler mode). Describe it in words, or try again." }) + "\n");
   legacyChat(res, prompt, session || lastSession, MODEL);
 });
 

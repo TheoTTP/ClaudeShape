@@ -26,6 +26,12 @@
   .hero{margin:auto;text-align:center;color:var(--mut)}.hero img{height:110px;margin-bottom:10px}
   .chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px}
   .chips button{border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:16px;padding:6px 12px;cursor:pointer;font:inherit;font-size:13px}
+  #thumbs{display:none;gap:8px;padding:8px 16px 0;flex-wrap:wrap}#thumbs.on{display:flex}
+  #thumbs .t{position:relative}#thumbs img{height:56px;border-radius:8px;border:1px solid var(--line);display:block}
+  #thumbs .t button{position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;border:0;background:var(--err);color:#fff;font-size:11px;line-height:18px;padding:0;cursor:pointer}
+  #attach{border:1px solid var(--line);background:var(--card);color:var(--mut);border-radius:12px;width:40px;font-size:22px;cursor:pointer}
+  .b .att{display:flex;gap:6px;margin-top:6px}.b .att img{height:64px;border-radius:6px}
+  body.drag{outline:3px dashed var(--acc);outline-offset:-8px}
   form{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--line)}
   textarea{flex:1;resize:none;height:48px;padding:10px 6px 10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--fg);font:inherit;outline:none;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
   textarea:focus,#setup input:focus,#settings input:focus{border-color:var(--acc);box-shadow:0 0 0 3px color-mix(in srgb,var(--acc) 22%,transparent)}
@@ -53,7 +59,8 @@
   <li>Paste both values here. They stay on this computer.</li></ol>
   <input id="ak" placeholder="Access key" autocomplete="off"><input id="sk" type="password" placeholder="Secret key" autocomplete="off">
   <button id="savekeys">Save</button> <span id="keymsg" class="err"></span></div>
-<form id="f"><textarea id="p" placeholder="Describe a part…" autofocus></textarea><button id="go">Build</button></form>
+<div id="thumbs"></div>
+<form id="f"><button type="button" id="attach" title="Attach a reference image (or paste / drop one)">+</button><input type="file" id="file" accept="image/*" multiple hidden><textarea id="p" placeholder="Describe a part…" autofocus></textarea><button id="go">Build</button></form>
 <script>
 const log=document.getElementById("log"),p=document.getElementById("p"),go=document.getElementById("go");
 let session=null;
@@ -99,16 +106,34 @@ function render(el,text,noButton){
     inline(para,line.trim())}
   const links=noButton?null:text.match(ONSHAPE);
   if(links){const a=document.createElement("a");a.className="open";a.href=links[links.length-1];a.target="_blank";a.rel="noopener";a.textContent="Open in Onshape ↗";el.append(a)}}
+// ---- reference images: attach button, paste, or drop; shrunk before sending ----
+let attached=[];
+const thumbs=document.getElementById("thumbs");
+function paintThumbs(){thumbs.innerHTML="";thumbs.classList.toggle("on",attached.length>0);
+  attached.forEach((im,i)=>{const d=document.createElement("div");d.className="t";const img=document.createElement("img");img.src=im.url;const x=document.createElement("button");x.type="button";x.textContent="×";x.onclick=()=>{attached.splice(i,1);paintThumbs()};d.append(img,x);thumbs.append(d)})}
+async function addImage(file){
+  if(!file||!/^image\//.test(file.type)||attached.length>=4)return;
+  try{const bmp=await createImageBitmap(file),k=Math.min(1,1280/Math.max(bmp.width,bmp.height));
+    const c=document.createElement("canvas");c.width=Math.round(bmp.width*k);c.height=Math.round(bmp.height*k);
+    const g=c.getContext("2d");g.fillStyle="#fff";g.fillRect(0,0,c.width,c.height);g.drawImage(bmp,0,0,c.width,c.height);
+    const url=c.toDataURL("image/jpeg",0.85);attached.push({url,media_type:"image/jpeg",data:url.split(",")[1]});paintThumbs()}catch{}}
+document.getElementById("attach").onclick=()=>document.getElementById("file").click();
+document.getElementById("file").onchange=e=>{[...e.target.files].forEach(addImage);e.target.value=""};
+p.addEventListener("paste",e=>{const fs=[...(e.clipboardData?.files||[])].filter(f=>/^image\//.test(f.type));if(fs.length){e.preventDefault();fs.forEach(addImage)}});
+window.addEventListener("dragover",e=>{e.preventDefault();document.body.classList.add("drag")});
+window.addEventListener("dragleave",e=>{if(!e.relatedTarget)document.body.classList.remove("drag")});
+window.addEventListener("drop",e=>{e.preventDefault();document.body.classList.remove("drag");[...(e.dataTransfer?.files||[])].forEach(addImage)});
 const fmtTime=ms=>{const t=Math.max(1,Math.round(ms/1000)),m=Math.floor(t/60);return m?`${m}m ${t%60}s`:t+"s"};   // whole seconds: 1s, 2s … 1m 5s
-async function send(text){
-  go.disabled=true;bubble("me",text);
+async function send(text,imgs=[]){
+  go.disabled=true;const mine=bubble("me",text);
+  if(imgs.length){const row=document.createElement("div");row.className="att";imgs.forEach(im=>{const i=document.createElement("img");i.src=im.url;row.append(i)});mine.append(row)}
   // timer line at the top of the response: ticks while working, then reads "Done in …"
   const t0=performance.now(),timer=step("Working… 0s");timer.className="timing";
   const tick=setInterval(()=>{timer.textContent="Working… "+fmtTime(performance.now()-t0)},1000);
   let failed=false,problems=0,sketchNote="",gotResult=false,turnIds=new Set(),slowest="",detail="",openBtn=null,onshapeMs=0;
   const think=step("Thinking");think.className="step dots";
   try{
-    const r=await fetch("/chat",{method:"POST",headers:H,body:JSON.stringify({prompt:text,session})});
+    const r=await fetch("/chat",{method:"POST",headers:H,body:JSON.stringify({prompt:text,session,images:imgs.map(({media_type,data})=>({media_type,data}))})});
     const rd=r.body.getReader(),dec=new TextDecoder();let buf="",ai=null,final=null;
     for(;;){const{value,done}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
       while((i=buf.indexOf("\n"))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line.trim())continue;let e;try{e=JSON.parse(line)}catch{continue}
@@ -138,7 +163,7 @@ async function send(text){
   timer.textContent=(failed?"Stopped after ":"Done in ")+fmtTime(performance.now()-t0)+(failed?"":detail);timer.classList.add(failed?"bad":"ok");
   go.disabled=false;p.focus();
 }
-document.getElementById("f").onsubmit=e=>{e.preventDefault();const t=p.value.trim();if(!t||go.disabled)return;p.value="";send(t)};
+document.getElementById("f").onsubmit=e=>{e.preventDefault();const t=p.value.trim();if(!t||go.disabled)return;p.value="";const imgs=attached;attached=[];paintThumbs();send(t,imgs)};
 p.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();document.getElementById("f").requestSubmit()}});
 document.getElementById("new").onclick=async()=>{session=null;await fetch("/reset",{method:"POST",headers:H});location.reload()};
 </script></body></html>
