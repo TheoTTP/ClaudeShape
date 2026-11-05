@@ -11,7 +11,7 @@ import path from "node:path";
 import { loadKeys } from "./lib/config.js";
 import { loadLearned } from "./lib/learn.js";
 import { setLearned } from "./lib/onshape.js";
-import { applyRevolveCal } from "./lib/calib.js";
+import { applyRevolveCal, applyRegionCal } from "./lib/calib.js";
 import { BASE, urlOf, createDocumentWithStudio, takePending, saveCtx, loadCtx, clearCtx } from "./lib/doc.js";
 
 const LOG = path.join(os_.homedir(), ".claudeshape-timing.log");
@@ -74,7 +74,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: input = {} } = req.params;
   const t0 = Date.now();
-  applyRevolveCal();                                            // how this Onshape wants partial revolve angles
+  applyRevolveCal(); applyRegionCal();                                            // how this Onshape wants partial revolve angles
   setLearned(loadLearned());                                    // Onshape's own dimension format, if it has been learned
   { const cur = loadCtx(); if (cur) ctx = cur; }                 // the other Claude worker may have switched document
   const ms = () => {                                              // lets the window show how long Onshape took

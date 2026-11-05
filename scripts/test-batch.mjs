@@ -560,3 +560,43 @@ console.log("metadata retry tests passed");
   assert.ok(fine.filter((x) => /segment \d+$/.test(x.input?.name || "")).length > expandMacro({ tool: "bend_tube", input: { radius: R, sections: [{ length: 60, r: 10 }] } }, "h").filter((x) => /segment \d+$/.test(x.input?.name || "")).length);
 }
 console.log("bend chain tests passed");
+
+// ---- naming/colouring is cheap and runs in parallel ----
+{
+  const { stylePart, resetMetaDown } = await import("../lib/onshape.js");
+  const { expandMacro } = await import("../lib/agent.js");
+  resetMetaDown();
+  // requests per styled part: read, one combined update, one read-back
+  const meta = { Name: "Part 1", Appearance: { color: { red: 1, green: 1, blue: 1 }, opacity: 255 } }; const calls = [];
+  const osh = { getPartMetadata: async () => { calls.push("GET"); return { properties: [{ name: "Name", propertyId: "n", value: meta.Name }, { name: "Appearance", propertyId: "a", value: meta.Appearance }] }; },
+    updatePartMetadata: async (_c, _p, props) => { calls.push("POST"); for (const q of props) { if (q.propertyId === "n") meta.Name = q.value; else meta.Appearance = q.value; } return {}; } };
+  const r = await stylePart(osh, { did: "Dx", eid: "Ex" }, "P1", { name: "Grip", color: "black" });
+  assert.deepEqual(calls, ["GET", "POST", "GET"]); assert.equal(r.named, true); assert.equal(r.colored, true);
+  // if Onshape refuses the pair, the name still goes through and colours are tried one by one
+  const meta2 = { Name: "x", Appearance: { color: { red: 1, green: 1, blue: 1 } } };
+  const osh2 = { getPartMetadata: async () => ({ properties: [{ name: "Name", propertyId: "n", value: meta2.Name }, { name: "Appearance", propertyId: "a", value: meta2.Appearance }] }),
+    updatePartMetadata: async (_c, _p, props) => { if (props.length > 1) throw new Error("400 bad pair"); for (const q of props) { if (q.propertyId === "n") meta2.Name = q.value; else if (q.value.color.red <= 1) meta2.Appearance = q.value; else throw new Error("400 bad colour"); } return {}; } };
+  const r2 = await stylePart(osh2, { did: "Dy", eid: "Ey" }, "P1", { name: "Ring", color: "white" });
+  assert.equal(r2.named, true); assert.equal(r2.colored, true);
+
+  // a tube with several styled sections: the styling steps come last and run together
+  const secs = [{ length: 20, r: 14, name: "pommel", color: "silver" }, { length: 40, r: 12, name: "grip", color: "black" }, { length: 10, r: 16, color: "gold" }, { length: 30, r: 15, name: "body", color: "silver" }];
+  const steps = expandMacro({ tool: "bend_tube", input: { radius: 500, sections: secs, name: "Hilt" } }, "h");
+  const lastBuild = steps.map((x) => x.tool).lastIndexOf("revolve"), firstStyle = steps.findIndex((x) => x.tool === "style_part");
+  assert.ok(firstStyle > lastBuild, "all styling comes after all building");
+  assert.ok(steps.slice(firstStyle).every((x) => x.tool === "style_part"));
+
+  let live = 0, peak = 0; const parts = []; const metaBy = {};
+  const os = {
+    addFeature: async (_c, f) => { const id = "F" + Math.random().toString(36).slice(2, 7); if (f.featureType === "revolve" && f.parameters.find((q) => q.parameterId === "operationType").value === "NEW") { const pid = "P" + (parts.length + 1); parts.push(pid); metaBy[pid] = { Name: "", Appearance: { color: {}, opacity: 255 } }; } return { feature: { featureId: id, constraints: f.constraints }, featureState: { featureStatus: "OK" } }; },
+    getParts: async () => parts.map((partId) => ({ partId })), deleteFeature: async () => ({}), getBoundingBox: async () => ({ lowX: 0, lowY: 0, lowZ: 0, highX: 0.1, highY: 0.03, highZ: 0.1 }),
+    getPartMetadata: async (_c, pid) => ({ properties: [{ name: "Name", propertyId: "n", value: metaBy[pid].Name }, { name: "Appearance", propertyId: "a", value: metaBy[pid].Appearance }] }),
+    updatePartMetadata: async (_c, pid, props) => { live++; peak = Math.max(peak, live); await new Promise((r) => setTimeout(r, 15)); live--; for (const q of props) { if (q.propertyId === "n") metaBy[pid].Name = q.value; else metaBy[pid].Appearance = q.value; } return {}; },
+  };
+  const t0 = Date.now();
+  const out = await runTool(os, { eid: "Ez" }, "build_steps", { preview: false, steps: [{ tool: "bend_tube", input: { radius: 500, sections: secs, name: "Hilt" } }] });
+  assert.equal(out.error, undefined); assert.equal(out.built[0].warning, undefined);
+  assert.ok(peak >= 2, "styling of different parts overlaps in time (peak " + peak + ")");
+  assert.deepEqual(Object.values(metaBy).map((m) => m.Name).sort(), ["", "Hilt body", "Hilt grip", "Hilt pommel"].sort());
+}
+console.log("styling speed tests passed");

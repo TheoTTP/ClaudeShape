@@ -93,3 +93,83 @@ const fakeOnshape = (obeys) => {
   assert.equal(fine.error, undefined);
 }
 console.log("calibration tests passed");
+
+// ---- 4. one sketch for the whole tube: each revolve picks its region by a point, and its own axis ----
+{
+  const { expandMacro } = await import("../lib/agent.js");
+  const { setRegionPoint, buildSketch, buildExtrude } = await import("../lib/onshape.js");
+  const { calibrateRegionPoint, loadRegionCal, applyRegionCal } = await import("../lib/calib.js");
+  const R = 500;
+  const secs = [{ length: 22, r: 15, name: "pommel", color: "silver" }, { length: 70, r: 13, name: "grip", color: "black" }, { length: 6, r: 17 }, { length: 40, r: 18, name: "emitter", color: "silver" }];
+  const input = { radius: R, sections: secs, name: "Hilt" };
+
+  setRegionPoint(false);
+  const slow = expandMacro({ tool: "bend_tube", input }, "h");
+  setRegionPoint(true);
+  const fast = expandMacro({ tool: "bend_tube", input }, "h");
+  const count = (st, t) => st.filter((x) => x.tool === t).length;
+  const sketches = fast.filter((x) => x.tool === "create_sketch");
+  assert.ok(sketches.length >= 2 && sketches.length <= 4, "a few shared sketches instead of one per piece, got " + sketches.length);
+  assert.equal(count(fast, "revolve"), count(slow, "revolve"), "same bodies");
+  assert.ok(count(fast, "create_sketch") + count(fast, "revolve") < count(slow, "create_sketch") + count(slow, "revolve"), "fewer features");
+  {                                                            // a longer, finer tube saves more (the more pieces, the closer to half)
+    const long = { radius: 300, max_step_deg: 3, sections: [{ length: 60, r: 14 }, { length: 8, r: 18 }, { length: 90, r: 12 }, { length: 8, r: 18 }, { length: 70, r: 15 }] };
+    setRegionPoint(false); const a = expandMacro({ tool: "bend_tube", input: long }, "h"); setRegionPoint(true); const b = expandMacro({ tool: "bend_tube", input: long }, "h");
+    assert.ok(b.filter((x) => x.tool === "create_sketch" || x.tool === "revolve").length < 0.65 * a.filter((x) => x.tool === "create_sketch" || x.tool === "revolve").length, "about 40% fewer features on a long tube");
+  }
+  assert.ok(fast.findIndex((x) => x.tool === "create_sketch") < fast.findIndex((x) => x.tool === "revolve"), "the sketches come before the revolves");
+  assert.ok(fast.filter((x) => x.tool === "create_sketch").every((x) => fast.indexOf(x) < fast.findIndex((y) => y.tool === "revolve")));
+  assert.deepEqual(fast.filter((x) => x.tool === "style_part").map((x) => x.input.color), slow.filter((x) => x.tool === "style_part").map((x) => x.input.color));
+
+  // geometry, per shared sketch: shapes inside one sketch must not overlap, each revolve's point is inside ITS region only,
+  // and its axis is that region's own edge
+  const inPoly = (pt, poly) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { if (((poly[i][1] > pt[1]) !== (poly[j][1] > pt[1])) && pt[0] < ((poly[j][0] - poly[i][0]) * (pt[1] - poly[i][1])) / (poly[j][1] - poly[i][1]) + poly[i][0]) c = !c; } return c; };
+  const segOf = (e) => { const g = e.geometry; return [[g.pntX * 1000, g.pntY * 1000], [(g.pntX + g.dirX * e.endParam) * 1000, (g.pntY + g.dirY * e.endParam) * 1000]]; };
+  const halfDisc = (sh) => { const c = [(sh.start[0] + sh.segments[0].to[0]) / 2, (sh.start[1] + sh.segments[0].to[1]) / 2]; return { c, r: sh.segments[0].radius }; };
+  const overlap = (A, B) => {                                  // do two shapes of one sketch overlap? (sample points of each against the other)
+    const samples = (sh) => { if (sh.type === "polygon") { const p = sh.points; return [...p, ...p.map((v, i) => [(v[0] + p[(i + 1) % 4][0]) / 2, (v[1] + p[(i + 1) % 4][1]) / 2]), [p.reduce((t, v) => t + v[0], 0) / 4, p.reduce((t, v) => t + v[1], 0) / 4]]; } const { c, r } = halfDisc(sh); return [c, [c[0] + r * 0.5, c[1]], [c[0] - r * 0.5, c[1]], [c[0], c[1] + r * 0.5], [c[0], c[1] - r * 0.5]]; };
+    const inside = (pt, sh) => (sh.type === "polygon" ? inPoly(pt, sh.points) : (() => { const { c, r } = halfDisc(sh); return Math.hypot(pt[0] - c[0], pt[1] - c[1]) < r - 1e-6; })());
+    return samples(A).some((pt) => inside(pt, B)) || samples(B).some((pt) => inside(pt, A));
+  };
+  const revs = fast.filter((x) => x.tool === "revolve"), bySketch = {};
+  for (const sk of sketches) bySketch[sk.as] = { shapes: sk.input.shapes, built: buildSketch({ plane: "front", shapes: sk.input.shapes }), next: 0, ent: 0, regions: [] };
+  for (const g of Object.values(bySketch)) {
+    g.shapes.forEach((sh, a) => g.shapes.forEach((sh2, b) => { if (b > a && sh.type === "polygon" && sh2.type === "polygon") assert.ok(!overlap(sh, sh2), "no two pieces of one sketch overlap"); }));
+    for (const sh of g.shapes) { if (sh.type === "polygon") { g.regions.push({ kind: "poly", pts: sh.points, axis: `e${g.ent + 3}` }); g.ent += 4; } else { g.regions.push({ kind: "joint", ...halfDisc(sh), axis: `e${g.ent + 1}` }); g.ent += 2; } }
+  }
+  for (const rv of revs) {
+    const g = bySketch[rv.input.sketch_id.replace(/^\$/, "")], reg = g.regions[g.next++], pt = [rv.input.region_point[0], rv.input.region_point[2]];
+    assert.equal(rv.input.region_point[1], 0, "the Front plane is y = 0");
+    assert.equal(rv.input.axis_entity_id, reg.axis);
+    const byId = Object.fromEntries(g.built.entities.map((e) => [e.entityId, e]));
+    if (reg.kind === "poly") {
+      assert.ok(inPoly(pt, reg.pts), "the point is inside its own piece");
+      assert.ok(g.regions.every((o) => o === reg || o.kind !== "poly" || !inPoly(pt, o.pts)), "and inside no other piece of that sketch");
+      const [a, b] = segOf(byId[reg.axis]);                      // the axis edge runs P1 -> P0 of this piece
+      assert.ok(Math.hypot(a[0] - reg.pts[3][0], a[1] - reg.pts[3][1]) < 1e-6 && Math.hypot(b[0] - reg.pts[0][0], b[1] - reg.pts[0][1]) < 1e-6);
+    } else {
+      assert.ok(Math.hypot(pt[0] - reg.c[0], pt[1] - reg.c[1]) < reg.r, "inside the half disc");
+      assert.ok(byId[reg.axis].geometry.btType.includes("Line"), "the joint's axis is its diameter line");
+      assert.ok(g.regions.every((o) => o === reg || o.kind !== "joint" || Math.hypot(pt[0] - o.c[0], pt[1] - o.c[1]) >= o.r), "and in no other joint of that sketch");
+    }
+  }
+  assert.ok(Object.values(bySketch).every((g) => g.next === g.regions.length), "every region is used exactly once");
+
+  // the query text
+  const rv = buildExtrude({ sketch_id: "S9", depth: 5, region_point: [15, 0, 15] });
+  assert.match(rv.parameters.find((p) => p.parameterId === "entities").queries[0].queryString, /qContainsPoint\(qSketchRegion\(makeId\("S9"\), true\), vector\(15\.000000, 0\.000000, 15\.000000\) \* millimeter\)/);
+
+  // ---- the self-test for it ----
+  const osh = (xRange) => ({ createDocument: async () => ({ id: "D", defaultWorkspace: { id: "W" } }), getWorkspaceElements: async () => [{ id: "E", elementType: "PARTSTUDIO" }],
+    addFeature: async () => ({ feature: { featureId: "F" }, featureState: { featureStatus: "OK" } }), getBoundingBox: async () => ({ lowX: xRange[0] / 1000, highX: xRange[1] / 1000 }), deleteFeature: async () => ({}) });
+  setRegionPoint(false); try { fs.rmSync(path.join(process.env.HOME, ".claudeshape-region.json")); } catch {}
+  const bad = osh([10, 50]);                                         // both rectangles became bodies: the point was ignored
+  assert.equal(await calibrateRegionPoint(bad), null); assert.equal(regionPointOKnow(), false);
+  const n = 0; assert.equal(await calibrateRegionPoint(bad), null);       // remembered for a day
+  const good = osh([10, 20]);
+  assert.ok((await calibrateRegionPoint(good, { force: true })).ok); assert.equal(regionPointOKnow(), true);
+  setRegionPoint(false); applyRegionCal(); assert.equal(regionPointOKnow(), true, "applied again on the next start");
+  setRegionPoint(false);
+  function regionPointOKnow() { return expandMacro({ tool: "bend_tube", input }, "h").filter((x) => x.tool === "create_sketch").length <= 4; }
+}
+console.log("shared sketch tests passed");

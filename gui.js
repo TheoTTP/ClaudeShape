@@ -12,7 +12,7 @@ import { claudeCandidates } from "./lib/claude-bin.js";
 import { DESIGN_RULES } from "./lib/agent.js";
 import { precreate, clearAll } from "./lib/doc.js";
 import { learn } from "./lib/learn.js";
-import { calibrateRevolve, applyRevolveCal } from "./lib/calib.js";
+import { calibrateRevolve, applyRevolveCal, calibrateRegionPoint, applyRegionCal } from "./lib/calib.js";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -253,6 +253,8 @@ async function selfTestAll(o) {
     selfTest.revolve = "running";
     try { selfTest.revolve = (await calibrateRevolve(o)) ? "ok" : "failed"; } catch { selfTest.revolve = "failed"; }
   }
+  applyRegionCal();
+  try { await calibrateRegionPoint(o); } catch { /* fine: keeps one sketch per piece */ }     // can one sketch serve many revolves? (faster builds)
   await learn(o).catch(() => {});                                // then Onshape's dimension format (slowly, once)
 }
 
