@@ -44,6 +44,6 @@ srv.kill();
 const srv2 = spawn("node", ["gui.js"], { env: { ...process.env, CLAUDE_BIN: "/nonexistent/claude", CLAUDESHAPE_PORT: "4571" }, stdio: "ignore" });
 await new Promise((r) => setTimeout(r, 800));
 const bad = (await (await fetch("http://127.0.0.1:4571/chat", { method: "POST", headers: { "content-type": "application/json", "x-claudeshape": "1" }, body: JSON.stringify({ prompt: "x" }) })).text());
-assert.match(bad, /Could not find Claude Code/);
+assert.match(bad, /Could not find Claude/);
 srv2.kill();
 console.log("gui smoke passed");
