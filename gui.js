@@ -34,16 +34,30 @@ function fire(cmd, args, opts) {
   return c;
 }
 
+// At most one window per launch: a lock file makes a second, near-simultaneous start (double-click, app started twice)
+// open nothing.
+const LOCK = path.join(os.tmpdir(), "claudeshape-window.lock");
+function claimWindow() {
+  try { if (Date.now() - Number(fs.readFileSync(LOCK, "utf8")) < 8000) return false; } catch {}
+  try { fs.writeFileSync(LOCK, String(Date.now())); } catch {}
+  return true;
+}
+// ClaudeShape's own browser profile: a fresh Chrome/Edge process opens ONLY our window (no restored tabs, no
+// second "new tab" window) and never touches the user's normal browser.
+const PROFILE = path.join(os.homedir(), ".claudeshape-browser");
+const APP_FLAGS = [`--app=${URL_}`, "--window-size=520,780", `--user-data-dir=${PROFILE}`, "--no-first-run", "--no-default-browser-check"];
+
 function openWindow() {
+  if (!claimWindow()) return;
   const quiet = { stdio: "ignore", detached: true };
   if (process.platform === "darwin") {
     const chrome = spawnSync("open", ["-Ra", "Google Chrome"]).status === 0;
-    if (chrome) fire("open", ["-na", "Google Chrome", "--args", `--app=${URL_}`, "--window-size=520,780"], quiet);
+    if (chrome) fire("open", ["-na", "Google Chrome", "--args", ...APP_FLAGS], quiet);
     else fire("open", [URL_], quiet);
   } else if (process.platform === "win32") {
     // Edge ships with Windows; --app gives a chrome-less window. Fall back to Chrome, then the default browser.
     const tryApp = (exe, next) => {
-      const c = fire("cmd", ["/c", "start", '""', exe, `--app=${URL_}`, "--window-size=520,780"], { ...quiet, windowsHide: true });
+      const c = fire("cmd", ["/c", "start", '""', exe, ...APP_FLAGS], { ...quiet, windowsHide: true });
       c.on("exit", (code) => { if (code && next) next(); });
     };
     tryApp("msedge", () => tryApp("chrome", () => fire("cmd", ["/c", "start", '""', URL_], { ...quiet, windowsHide: true })));
@@ -67,6 +81,8 @@ app.use("/icons", express.static(path.join(here, "public")));
 
 let lastPing = Date.now();
 app.get("/ping", (_req, res) => { lastPing = Date.now(); res.send("ok"); });
+// lets a second launch see whether a window is already open
+app.get("/alive", (_req, res) => res.json({ windowOpen: Date.now() - lastPing < 20000 }));
 
 const version = (() => { const r = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: here, encoding: "utf8" }); return r.status === 0 ? r.stdout.trim() : "dev"; })();
 app.get("/status", (_req, res) => res.json({ hasKeys: !!loadKeys(), version }));
@@ -212,7 +228,8 @@ app.post("/chat", async (req, res) => {
 app.post("/reset", (_req, res) => { try { worker?.child.kill(); } catch {} worker = null; prewarm(); res.json({ ok: true }); });
 process.on("exit", () => { try { worker?.child.kill(); } catch {} });
 
-const server = app.listen(PORT, "127.0.0.1", () => {
+const server = app.listen(PORT, "127.0.0.1", (err) => {
+  if (err) return;   // Express 5 also calls this when the port is taken; the "error" handler below deals with that
   console.log(`ClaudeShape window on ${URL_}`);
   openWindow();
   prewarm();                                                   // start Claude now so the first message is fast
@@ -221,5 +238,8 @@ const server = app.listen(PORT, "127.0.0.1", () => {
   setInterval(() => { if (Date.now() - lastPing > IDLE_MS) process.exit(0); }, 5000).unref?.();
 });
 server.on("error", (e) => {
-  if (e.code === "EADDRINUSE") { openWindow(); setTimeout(() => process.exit(0), 500); } else throw e;
+  if (e.code !== "EADDRINUSE") throw e;
+  // Already running. If its window is open, don't open another; otherwise reopen it.
+  fetch(`${URL_}/alive`).then((r) => r.json()).catch(() => ({ windowOpen: false }))
+    .then((a) => { if (!a.windowOpen) openWindow(); setTimeout(() => process.exit(0), 600); });
 });
