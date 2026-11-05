@@ -42,6 +42,7 @@ async function states(url) {
     const st = res.featureStates?.[f.featureId] || {};
     console.log(`${f.name}: ${st.featureStatus ?? "?"}${st.statusMessage || st.inferredMessage ? " (" + (st.statusMessage || st.inferredMessage) + ")" : ""}${f.constraints ? ` [${f.constraints.length} constraints]` : ""}`);
     report[f.name] = { state: st, constraints: f.constraints?.length };
+    if (process.argv.includes("--raw")) console.log("   state:", JSON.stringify(st).slice(0, 600));
   }
 }
 
