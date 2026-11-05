@@ -9,7 +9,7 @@ const fake = http.createServer((req, res) => {
   let b = ""; req.on("data", (d) => b += d); req.on("end", () => {
     seen.push(`${req.method} ${req.url}`);
     res.setHeader("content-type", "application/json");
-    if (req.method === "POST" && req.url === "/api/documents") return res.end(JSON.stringify({ id: "aaa", defaultWorkspace: { id: "bbb" } }));
+    if (req.method === "POST" && req.url === "/api/v10/documents") return res.end(JSON.stringify({ id: "aaa", defaultWorkspace: { id: "bbb" } }));
     if (req.url.endsWith("/elements")) return res.end(JSON.stringify([{ id: "ccc", elementType: "PARTSTUDIO" }]));
     if (req.method === "POST" && req.url.endsWith("/features")) return res.end(JSON.stringify({ feature: { featureId: "F1", name: "x" }, featureState: { featureStatus: "OK" } }));
     res.end("{}");
