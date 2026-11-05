@@ -67,6 +67,14 @@ assert.deepEqual(helperAxisPlan("z", [10, 20]), { base: "front", offset: -20, li
 assert.deepEqual(planeQuery("face:JHD").deterministicIds, ["JHD"]);
 const faces = planarFaces({ bodies: [{ id: "B", faces: [{ id: "F1", surface: { type: "plane", origin: [0, 0, 0.01], normal: [0, 0, 1] } }, { id: "F2", surface: { type: "cylinder" } }] }] });
 assert.deepEqual(faces, [{ face_id: "F1", body_id: "B", normal: [0, 0, 1], origin_mm: [0, 0, 10] }]);
+import { textContours } from "../lib/text.js";
+const hw = textContours({ text: "HELLO 2025", height: 10, bold: true });
+assert.equal(hw.contours.length, 11);                     // H E L L O(2) 2 0(2) 2 5
+const ys = hw.contours.flat().map((p) => p[1]);
+assert.ok(Math.abs(Math.max(...ys) - 10) < 0.6 && Math.min(...ys) > -0.6, "cap height ~ 10mm");
+const ts = buildSketch({ plane: "top", shapes: [{ type: "text", text: "Hi O", height: 8, align: "center" }] });
+assertClosed(ts.entities);
+assert.throws(() => textContours({ text: "  ", height: 5 }));
 import { seal, unseal } from "../lib/seal.js";
 const tok = seal({ a: "x", e: 1 });
 assert.deepEqual(unseal(tok), { a: "x", e: 1 });
