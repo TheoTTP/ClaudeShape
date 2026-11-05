@@ -74,6 +74,11 @@ assert.deepEqual(helperAxisPlan("z", [10, 20]), { base: "front", offset: -20, li
 assert.deepEqual(planeQuery("face:JHD").deterministicIds, ["JHD"]);
 const faces = planarFaces({ bodies: [{ id: "B", faces: [{ id: "F1", surface: { type: "plane", origin: [0, 0, 0.01], normal: [0, 0, 1] } }, { id: "F2", surface: { type: "cylinder" } }] }] });
 assert.deepEqual(faces, [{ face_id: "F1", body_id: "B", normal: [0, 0, 1], origin_mm: [0, 0, 10] }]);
+// object-style vectors and upper-case type are accepted too
+assert.deepEqual(planarFaces({ bodies: [{ id: "B", faces: [{ id: "F9", surface: { type: "PLANE", origin: { x: 0, y: 0, z: 0.02 }, normal: { x: 0, y: 1, z: 0 } } }] }] }),
+  [{ face_id: "F9", body_id: "B", normal: [0, 1, 0], origin_mm: [0, 0, 20] }]);
+// unrecognised format -> a diagnostic instead of silent nothing
+assert.match(planarFaces({ bodies: [{ id: "B", faces: [{ id: "X", weird: 1 }] }] }).note, /No planar faces/);
 import { textContours } from "../lib/text.js";
 const hw = textContours({ text: "HELLO 2025", height: 10, bold: true });
 assert.equal(hw.contours.length, 11);                     // H E L L O(2) 2 0(2) 2 5

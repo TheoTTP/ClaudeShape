@@ -13,7 +13,10 @@
   #log{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
   .b{max-width:88%;padding:10px 14px;border-radius:14px;white-space:pre-wrap;word-wrap:break-word}
   .me{align-self:flex-end;background:var(--acc);color:#fff;border-bottom-right-radius:4px}
-  .ai{align-self:flex-start;background:var(--card);border:1px solid var(--line);border-bottom-left-radius:4px}
+  .ai p,.ai ul,.ai ol{margin:0 0 .6em}.ai p:last-child,.ai ul:last-child,.ai ol:last-child{margin-bottom:0}.ai ul,.ai ol{padding-left:1.3em}.ai li{margin:.15em 0}
+  .ai .h{font-weight:700;margin:.5em 0 .3em}.ai code{font:12.5px ui-monospace,monospace;background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:0 4px}
+  .ai a:not(.open){color:var(--acc)}
+  .ai{white-space:normal;align-self:flex-start;background:var(--card);border:1px solid var(--line);border-bottom-left-radius:4px}
   .step{align-self:flex-start;color:var(--mut);font-size:13px;padding:0 6px}
   .err{color:var(--err)}
   .open{display:inline-block;margin-top:8px;background:var(--acc);color:#fff;text-decoration:none;padding:7px 14px;border-radius:9px;font-weight:600}
@@ -57,10 +60,35 @@ setInterval(()=>fetch("/ping").catch(()=>{}),10000);fetch("/ping");
 const FRIENDLY={build_steps:"Building the model",preview:"Checking how it looks",new_document:"Creating a document",create_sketch:"Drawing a sketch",extrude:"Extruding",revolve:"Revolving",fillet:"Rounding edges",chamfer:"Chamfering",offset_plane:"Adding a plane",linear_pattern:"Making a pattern",circular_pattern:"Making a pattern",find_faces:"Finding faces",get_bounding_box:"Checking size",delete_feature:"Undoing a step",list_features:"Reviewing the model",open_document:"Opening the document",list_documents:"Looking up documents"};
 function bubble(cls,text){document.getElementById("hero")?.remove();const d=document.createElement("div");d.className="b "+cls;d.textContent=text;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
 function step(t){document.getElementById("hero")?.remove();const d=document.createElement("div");d.className="step";d.textContent=t;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
-function render(el,text){el.textContent="";const re=/(https:\/\/cad\.onshape\.com\/documents\/[^\s)>\]]+)/g;let last=0,m,links=[];
-  while((m=re.exec(text))){el.append(text.slice(last,m.index).replace(/\s*$/,""));links.push(m[1]);last=m.index+m[0].length}
-  el.append(text.slice(last));
-  if(links.length){el.append(document.createElement("br"));const a=document.createElement("a");a.className="open";a.href=links[links.length-1];a.target="_blank";a.textContent="Open in Onshape ↗";el.append(a)}}
+// Small, safe markdown renderer (no innerHTML): headings, **bold**, *italic*, `code`, lists, links, paragraphs.
+const ONSHAPE=/https:\/\/cad\.onshape\.com\/documents\/[^\s)>\]]+/g;
+function inline(parent,text){
+  const re=/(\*\*[^*\n]+?\*\*|__[^_\n]+?__|`[^`\n]+`|\*[^*\s][^*\n]*?\*|https?:\/\/[^\s)<>\]]+)/g;let last=0,m;
+  while((m=re.exec(text))){
+    parent.append(text.slice(last,m.index));const t=m[0];let n;
+    if(t.startsWith("**")||t.startsWith("__")){n=document.createElement("strong");inline(n,t.slice(2,-2))}
+    else if(t[0]==="`"){n=document.createElement("code");n.textContent=t.slice(1,-1)}
+    else if(t[0]==="*"){n=document.createElement("em");inline(n,t.slice(1,-1))}
+    else{n=document.createElement("a");n.href=t;n.target="_blank";n.rel="noopener";n.textContent=t}
+    parent.append(n);last=m.index+t.length}
+  parent.append(text.slice(last))}
+function render(el,text){
+  el.textContent="";let list=null,para=null;
+  const close=()=>{list=null;para=null};
+  for(const raw of text.split("\n")){
+    const line=raw.replace(/\s+$/,"");
+    if(!line.trim()){close();continue}
+    let m;
+    if((m=line.match(/^(#{1,4})\s+(.*)$/))){close();const h=document.createElement("div");h.className="h";inline(h,m[2]);el.append(h);continue}
+    if((m=line.match(/^\s*([-*•]|\d+[.)])\s+(.*)$/))){
+      const ordered=/\d/.test(m[1]);
+      if(!list||list.tagName!==(ordered?"OL":"UL")){list=document.createElement(ordered?"ol":"ul");el.append(list);para=null}
+      const li=document.createElement("li");inline(li,m[2]);list.append(li);continue}
+    list=null;
+    if(!para){para=document.createElement("p");el.append(para)}else para.append(document.createElement("br"));
+    inline(para,line.trim())}
+  const links=text.match(ONSHAPE);
+  if(links){const a=document.createElement("a");a.className="open";a.href=links[links.length-1];a.target="_blank";a.rel="noopener";a.textContent="Open in Onshape ↗";el.append(a)}}
 async function send(text){
   go.disabled=true;bubble("me",text);const think=step("Thinking");think.className="step dots";
   try{
@@ -71,7 +99,7 @@ async function send(text){
         if(e.session_id)session=e.session_id;
         if(e.type==="assistant"){for(const c of e.message?.content||[]){
           if(c.type==="tool_use"){think.remove();const n=c.name.replace(/^mcp__claudeshape__/,"");step("• "+(FRIENDLY[n]||n)+"…")}
-          if(c.type==="text"&&c.text.trim()){think.remove();ai=ai||bubble("ai","");ai.dataset.t=(ai.dataset.t||"")+c.text;render(ai,ai.dataset.t)}}}
+          if(c.type==="text"&&c.text.trim()){think.remove();ai=ai||bubble("ai","");ai.dataset.t=(ai.dataset.t?ai.dataset.t+"\n\n":"")+c.text.trim();render(ai,ai.dataset.t)}}}
         if(e.type==="result"){final=e.result;if(e.is_error)bubble("ai err",e.result||"Something went wrong.")}
         if(e.type==="gui_error")bubble("ai err",e.message);
       }}
