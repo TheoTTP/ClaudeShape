@@ -32,6 +32,12 @@ Then just talk to Claude:
 Claude creates a new Onshape document itself, builds the part, and gives you the link.
 It uses your existing Claude subscription, so there is no separate API key and nothing to host.
 
+## Desktop window (no terminal)
+
+`node gui.js` (or `npm run gui`) opens a small chat window: type a part, get an Onshape link. It runs
+Claude Code in the background (`claude -p`, restricted to the ClaudeShape tools), so it uses your Claude
+login and needs no API key. The window pings the helper; closing the window stops it.
+
 ## In-Onshape panel (right side of a Part Studio)
 
 A prompt box that lives inside Onshape. Whoever hosts it does the setup once; everyone else just clicks the icon.

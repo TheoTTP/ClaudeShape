@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClaudeShape</title><link rel="icon" href="/icons/icon-32.png">
+<style>
+  :root{--bg:#fbfaf9;--fg:#232b2d;--mut:#7a8588;--line:#e6e3df;--acc:#dc724e;--card:#fff;--err:#b3261e}
+  @media(prefers-color-scheme:dark){:root{--bg:#1c2224;--fg:#e8ecec;--mut:#98a3a6;--line:#2f3a3d;--card:#252d30}}
+  *{box-sizing:border-box}
+  body{margin:0;height:100vh;display:flex;flex-direction:column;font:15px/1.5 -apple-system,system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+  header{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);-webkit-app-region:drag}
+  header img{height:26px}header b{font-size:16px}
+  header button{margin-left:auto;border:1px solid var(--line);background:none;color:var(--mut);border-radius:8px;padding:4px 10px;cursor:pointer}
+  #log{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+  .b{max-width:88%;padding:10px 14px;border-radius:14px;white-space:pre-wrap;word-wrap:break-word}
+  .me{align-self:flex-end;background:var(--acc);color:#fff;border-bottom-right-radius:4px}
+  .ai{align-self:flex-start;background:var(--card);border:1px solid var(--line);border-bottom-left-radius:4px}
+  .step{align-self:flex-start;color:var(--mut);font-size:13px;padding:0 6px}
+  .err{color:var(--err)}
+  .open{display:inline-block;margin-top:8px;background:var(--acc);color:#fff;text-decoration:none;padding:7px 14px;border-radius:9px;font-weight:600}
+  .hero{margin:auto;text-align:center;color:var(--mut)}.hero img{height:110px;margin-bottom:10px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px}
+  .chips button{border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:16px;padding:6px 12px;cursor:pointer;font:inherit;font-size:13px}
+  form{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--line)}
+  textarea{flex:1;resize:none;height:48px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--fg);font:inherit}
+  #go{border:0;background:var(--acc);color:#fff;border-radius:12px;padding:0 18px;font-weight:600;cursor:pointer}
+  #go:disabled{opacity:.5}
+  .dots::after{content:"";animation:d 1.2s steps(4) infinite}@keyframes d{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+</style></head><body>
+<header><img src="/icons/icon-64.png" alt=""><b>ClaudeShape</b><button id="new">New part</button></header>
+<div id="log"><div class="hero" id="hero"><img src="/icons/icon-256.png" alt="">
+  <div>What do you want to make?</div>
+  <div class="chips">
+    <button>A 60×40×10 mm plate with four 5 mm corner holes</button>
+    <button>A 50 mm ball</button>
+    <button>A hex nut for an M8 bolt</button>
+    <button>A name plate that says HELLO, raised 1 mm</button>
+  </div></div></div>
+<form id="f"><textarea id="p" placeholder="Describe a part…" autofocus></textarea><button id="go">Build</button></form>
+<script>
+const log=document.getElementById("log"),p=document.getElementById("p"),go=document.getElementById("go");
+let session=null;
+setInterval(()=>fetch("/ping").catch(()=>{}),10000);fetch("/ping");
+const FRIENDLY={new_document:"Creating a document",create_sketch:"Drawing a sketch",extrude:"Extruding",revolve:"Revolving",fillet:"Rounding edges",chamfer:"Chamfering",offset_plane:"Adding a plane",linear_pattern:"Making a pattern",circular_pattern:"Making a pattern",find_faces:"Finding faces",get_bounding_box:"Checking size",delete_feature:"Undoing a step",list_features:"Reviewing the model",open_document:"Opening the document",list_documents:"Looking up documents"};
+function bubble(cls,text){document.getElementById("hero")?.remove();const d=document.createElement("div");d.className="b "+cls;d.textContent=text;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
+function step(t){document.getElementById("hero")?.remove();const d=document.createElement("div");d.className="step";d.textContent=t;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
+function render(el,text){el.textContent="";const re=/(https:\/\/cad\.onshape\.com\/documents\/[^\s)>\]]+)/g;let last=0,m,links=[];
+  while((m=re.exec(text))){el.append(text.slice(last,m.index).replace(/\s*$/,""));links.push(m[1]);last=m.index+m[0].length}
+  el.append(text.slice(last));
+  if(links.length){el.append(document.createElement("br"));const a=document.createElement("a");a.className="open";a.href=links[links.length-1];a.target="_blank";a.textContent="Open in Onshape ↗";el.append(a)}}
+async function send(text){
+  go.disabled=true;bubble("me",text);const think=step("Thinking");think.className="step dots";
+  try{
+    const r=await fetch("/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:text,session})});
+    const rd=r.body.getReader(),dec=new TextDecoder();let buf="",ai=null,final=null;
+    for(;;){const{value,done}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
+      while((i=buf.indexOf("\n"))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line.trim())continue;let e;try{e=JSON.parse(line)}catch{continue}
+        if(e.session_id)session=e.session_id;
+        if(e.type==="assistant"){for(const c of e.message?.content||[]){
+          if(c.type==="tool_use"){think.remove();const n=c.name.replace(/^mcp__claudeshape__/,"");step("• "+(FRIENDLY[n]||n)+"…")}
+          if(c.type==="text"&&c.text.trim()){think.remove();ai=ai||bubble("ai","");ai.dataset.t=(ai.dataset.t||"")+c.text;render(ai,ai.dataset.t)}}}
+        if(e.type==="result"){final=e.result;if(e.is_error)bubble("ai err",e.result||"Something went wrong.")}
+        if(e.type==="gui_error")bubble("ai err",e.message);
+      }}
+    think.remove();
+    if(final&&!ai)render(bubble("ai",""),final);
+  }catch(err){think.remove();bubble("ai err",err.message)}
+  go.disabled=false;p.focus();
+}
+document.getElementById("f").onsubmit=e=>{e.preventDefault();const t=p.value.trim();if(!t||go.disabled)return;p.value="";send(t)};
+p.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();document.getElementById("f").requestSubmit()}});
+document.querySelectorAll(".chips button").forEach(b=>b.onclick=()=>{p.value=b.textContent;p.focus()});
+document.getElementById("new").onclick=()=>{session=null;log.innerHTML="";location.reload()};
+</script></body></html>
