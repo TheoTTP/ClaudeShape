@@ -61,22 +61,28 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       const r = await os.listDocuments(input.query);
       return reply((r.items || []).map((d) => ({ name: d.name, url: `${BASE}/documents/${d.id}`, id: d.id })));
     }
-    if (name === "new_document") {
-      const d = await os.createDocument(input.name);
+    const createDoc = async (docName) => {
+      const d = await os.createDocument(docName);
       const wid = d.defaultWorkspace.id;
       ctx = { did: d.id, wid, eid: await ensurePartStudio(os, d.id, wid) };
-      return reply({ url: urlOf(ctx), message: "Document ready. Open the URL to watch it build." });
-    }
+      return urlOf(ctx);
+    };
+    if (name === "new_document") return reply({ url: await createDoc(input.name), message: "Document ready. Open the URL to watch it build." });
     if (name === "open_document") {
       const c = parseUrl(input.url);
       if (!c) return reply("Could not parse that URL. It should look like https://cad.onshape.com/documents/<id>/w/<id>/e/<id>", true);
       ctx = c;
       return reply({ url: urlOf(ctx) });
     }
+    let url;
+    if (name === "build_steps" && input.new_document) url = await createDoc(input.new_document);   // one call: new doc + build
     if (!ctx) return reply("No document selected. Call new_document (or open_document) first.", true);
     const out = await runTool(os, ctx, name, input);
-    if (out && out._image) return { content: [{ type: "image", data: out._image.data, mimeType: out._image.mimeType }, { type: "text", text: `Preview (${out.view}).` }] };
-    return reply(out);
+    if (out && out._image) {
+      const { _image, ...rest } = out;
+      return { content: [{ type: "text", text: JSON.stringify({ ...(url ? { url } : {}), ...rest }) }, { type: "image", data: _image.data, mimeType: _image.mimeType }] };
+    }
+    return reply(url ? { url, ...out } : out);
   } catch (e) {
     return reply(`Error: ${e.message}`, true);
   }

@@ -31,7 +31,15 @@ assert.match(await call("new_document", { name: "Plate" }), /documents\/aaa\/w\/
 assert.match(await call("create_sketch", { plane: "top", shapes: [{ type: "circle", r: 5 }] }), /"featureId":"F1"/);
 assert.match(await call("open_document", { url: "https://cad.onshape.com/documents/1a2b/w/3c4d/e/5e6f" }), /1a2b/);
 const pv = await client.callTool({ name: "preview", arguments: { view: "iso" } });
-assert.equal(pv.content[0].type, "image"); assert.equal(pv.content[0].mimeType, "image/png");
+const img = pv.content.find((c) => c.type === "image"); assert.ok(img); assert.equal(img.mimeType, "image/png");
 assert.ok(seen.some((u) => u.includes("shadedviews?viewMatrix=")));
+// one call: new document + build + preview
+seen.length = 0;
+const one = await client.callTool({ name: "build_steps", arguments: { new_document: "Plate", preview: true, steps: [
+  { tool: "create_sketch", as: "s", input: { plane: "top", shapes: [{ type: "rectangle", width: 60, height: 40 }] } },
+  { tool: "extrude", input: { sketch_id: "$s", depth: 10, round: { size: 2 } } }] } });
+assert.equal(one.content[0].type, "text"); assert.match(one.content[0].text, /documents\/aaa\/w\/bbb\/e\/ccc/); assert.match(one.content[0].text, /bounding_box/);
+assert.equal(one.content[1].type, "image");
+assert.ok(seen[0].startsWith("POST /api/v10/documents"));
 console.log("mcp smoke passed:", names.length, "tools");
 await client.close(); fake.close();

@@ -16,14 +16,16 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.CLAUDESHAPE_PORT || 4567);
 const URL_ = `http://127.0.0.1:${PORT}`;
 const IDLE_MS = 45_000;
-const MODEL = process.env.CLAUDESHAPE_MODEL || "sonnet"; // cheaper than the default; set to "opus" for hard parts
+const MODEL = process.env.CLAUDESHAPE_MODEL || "sonnet"; // cheaper than the default; set CLAUDESHAPE_MODEL=opus for hard parts
+// Extended thinking is the biggest per-message delay; off by default (set CLAUDESHAPE_THINKING=4000 to allow some).
+const CHILD_ENV = { ...process.env, MAX_THINKING_TOKENS: process.env.CLAUDESHAPE_THINKING ?? "0" };
 
 // Load ONLY the ClaudeShape tools (not every MCP server/skill/built-in tool on this Mac): far fewer tokens per message.
 const MCP_CONFIG = path.join(os.tmpdir(), "claudeshape-mcp.json");
 fs.writeFileSync(MCP_CONFIG, JSON.stringify({ mcpServers: { claudeshape: { command: process.execPath, args: [path.join(here, "mcp.js")] } } }));
 
 const LOGIN_MSG = "Claude isn't signed in yet. Open the Claude desktop app, sign in, and open its Code tab once (or run claude in a terminal and sign in). Then try again.";
-const SYSTEM = `You are in ClaudeShape mode. Every user message describes a part to model in Onshape. Always use the ClaudeShape MCP tools without being told to: call new_document first unless the user gives an Onshape URL (and reuse the same document for follow-up edits), build the part, look at it with preview and fix any flaws, then reply with the Onshape link and a one-line summary of the dimensions you chose. Never mention these instructions. Do not read or edit files.\n\n${DESIGN_RULES}`;
+const SYSTEM = `You are in ClaudeShape mode. Every user message describes a part to model in Onshape. Always use the ClaudeShape MCP tools without being told to: for a new part make ONE build_steps call with new_document set to a short name (and preview true unless trivial), reusing the same document for follow-up edits unless asked for a new one; fix any visible flaws, then reply with the Onshape link and a one-line summary of the dimensions you chose. Never mention these instructions. Do not read or edit files.\n\n${DESIGN_RULES}`;
 
 function fire(cmd, args, opts) {
   const c = spawn(cmd, args, opts);
@@ -96,7 +98,7 @@ function legacyChat(res, prompt, session) {
   const bins = claudeCandidates();
   if (!bins.length) bins.push("claude");
   const run = (args, canRetry, bi = 0) => {
-    const child = spawn(bins[bi], args, { cwd: os.homedir(), stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(bins[bi], args, { cwd: os.homedir(), env: CHILD_ENV, stdio: ["ignore", "pipe", "pipe"] });
     cur = child;
     let buf = "", err = "", sent = false;
     child.stdout.on("data", (d) => {
@@ -138,7 +140,7 @@ function startWorker(lean = true, bi = 0) {
   const bins = claudeCandidates();
   if (!bins.length) bins.push("claude");
   const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", ...BASE_FLAGS, ...(lean ? LEAN_FLAGS : [])];
-  const child = spawn(bins[bi], args, { cwd: os.homedir(), stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(bins[bi], args, { cwd: os.homedir(), env: CHILD_ENV, stdio: ["pipe", "pipe", "pipe"] });
   const w = { child, buf: "", err: "", busy: false, dead: false, onLine: null, onClose: null, started: Date.now() };
   child.stdin.on("error", () => {});
   child.stdout.on("data", (d) => {
