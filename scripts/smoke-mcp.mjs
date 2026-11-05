@@ -25,7 +25,7 @@ await client.connect(new StdioClientTransport({
   env: { ...process.env, CLAUDESHAPE_TMP: (await import("node:fs")).mkdtempSync((await import("node:os")).tmpdir() + "/mcp-"), ONSHAPE_BASE_URL: "http://localhost:4201", ONSHAPE_ACCESS_KEY: "a", ONSHAPE_SECRET_KEY: "s" },
 }));
 const names = (await client.listTools()).tools.map((t) => t.name);
-for (const n of ["new_document", "create_sketch", "extrude", "revolve", "linear_pattern", "find_faces"]) assert.ok(names.includes(n), n);
+for (const n of ["new_document", "create_sketch", "extrude", "revolve", "linear_pattern", "find_faces", "shell", "mirror", "sweep", "loft"]) assert.ok(names.includes(n), n);
 const call = async (name, args) => (await client.callTool({ name, arguments: args })).content[0].text;
 
 assert.match(await call("create_sketch", { plane: "top", shapes: [] }), /No document selected/);

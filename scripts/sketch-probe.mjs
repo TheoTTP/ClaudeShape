@@ -29,7 +29,10 @@ async function dump(url) {
   const feats = (await osh.getFeatures(ctx)).features || [];
   for (const f of feats.filter((x) => x.featureType === "newSketch")) {
     console.log(`\nSketch "${f.name}": ${f.entities?.length || 0} entities, ${f.constraints?.length || 0} constraints`);
-    for (const c of summarize(f.constraints)) console.log("  ", c.type, c.params.join(" "));
+    // full JSON of each constraint (this is the exact format Onshape itself uses)
+    for (const c of f.constraints || []) console.log("  ", JSON.stringify(c).replace(/"btType":"[^"]*",?/g, "").slice(0, 700));
+    const pts = (f.entities || []).map((e) => `${e.entityId}${e.centerId ? "(c)" : ""}`).join(" ");
+    console.log("   entity ids:", pts.slice(0, 300));
     report[f.name] = { entities: f.entities, constraints: f.constraints };
   }
 }

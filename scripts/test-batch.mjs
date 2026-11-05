@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { runTool } from "../lib/agent.js";
+import { buildShell } from "../lib/onshape.js";
 
 const posted = [];
 const mkOs = (failAt) => ({
@@ -260,3 +261,54 @@ console.log("timing tests passed");
   assert.match((await runTool(os, {}, "build_steps", { preview: false, steps: [{ tool: "enclosure", input: { width: 11, depth: 11, height: 10, wall: 4 } }] })).error, /lid lip does not fit/);
 }
 console.log("enclosure tests passed");
+
+// ---- shell / mirror / sweep / loft ----
+{
+  const posted = [];
+  const os = {
+    addFeature: async (_c, f) => { posted.push(f); return { feature: { featureId: "F" + posted.length }, featureState: { featureStatus: "OK" } }; },
+    deleteFeature: async () => ({}),
+    getBoundingBox: async () => ({ lowX: 0, lowY: 0, lowZ: 0, highX: 0.04, highY: 0.04, highZ: 0.08 }),
+  };
+  const par = (f, id) => f.parameters.find((q) => q.parameterId === id);
+  const qs = (f, id) => par(f, id).queries[0].queryString;
+
+  await runTool(os, {}, "build_steps", { preview: false, steps: [
+    { tool: "cylinder", as: "cup", input: { r: 20, height: 60 } },
+    { tool: "shell", input: { feature_id: "$cup", thickness: 2.5 } },
+    { tool: "mirror", input: { feature_id: "$cup", plane: "right" } },
+  ] });
+  const shell = posted.find((f) => f.featureType === "shell");
+  assert.equal(par(shell, "thickness").expression, "2.5 mm");
+  assert.match(qs(shell, "entities"), /qCapEntity\(makeId\("F2"\), CapType\.END, EntityType\.FACE\)/);           // top cap of the cylinder extrude
+  const both = buildShellFor("both"); assert.match(both, /qUnion\(.*CapType\.END.*CapType\.START/);
+  assert.match(buildShellFor("bottom"), /CapType\.START/);
+  assert.throws(() => buildShellFor("side"), /open must be/);
+  const mirror = posted.find((f) => f.featureType === "mirror");
+  assert.equal(par(mirror, "mirrorType").value, "PART");
+  assert.match(qs(mirror, "entities"), /qCreatedBy\(makeId\("F2"\), EntityType\.BODY\)/);
+  assert.match(qs(mirror, "mirrorPlane"), /"Right"/);
+
+  // sweep
+  posted.length = 0;
+  await runTool(os, {}, "sweep", { profile_sketch_id: "P1", path_sketch_id: "P2", operation: "add" });
+  const sweep = posted[0];
+  assert.equal(sweep.featureType, "sweep"); assert.equal(par(sweep, "operationType").value, "ADD");
+  assert.match(qs(sweep, "profiles"), /qSketchRegion\(makeId\("P1"\), true\)/); assert.match(qs(sweep, "path"), /qCreatedBy\(makeId\("P2"\), EntityType\.EDGE\)/);
+
+  // loft macro: planes at each height, one sketch per section, then the loft through them in order
+  posted.length = 0;
+  const lr = await runTool(os, {}, "build_steps", { preview: false, steps: [{ tool: "loft_sections", as: "vase", input: { name: "Vase", sections: [
+    { z: 0, shapes: [{ type: "circle", r: 20 }] }, { z: 40, shapes: [{ type: "circle", r: 12 }] }, { z: 80, shapes: [{ type: "circle", r: 18 }] }] } }] });
+  assert.equal(lr.error, undefined);
+  assert.deepEqual(posted.map((f) => f.featureType), ["newSketch", "cPlane", "newSketch", "cPlane", "newSketch", "loft"]);     // no plane for z=0
+  const loft = posted.at(-1), items = par(loft, "profileSubqueries").items;
+  assert.equal(par(loft, "profileSubqueries").btType, "BTMParameterArray-2"); assert.equal(items.length, 3);
+  assert.deepEqual(items.map((it) => it.parameters[0].queries[0].queryString.match(/makeId\("(F\d)"\)/)[1]), ["F1", "F3", "F5"]);   // the three sketches, bottom to top
+  assert.match(posted[2].parameters[0].queries[0].queryString, /makeId\("F2"\)/);                                                    // section 2 sits on the offset plane
+  assert.equal(par(posted[1], "offset").expression, "40 mm");
+  assert.match((await runTool(os, {}, "build_steps", { steps: [{ tool: "loft_sections", input: { sections: [{ z: 0, shapes: [] }] } }] })).error, /at least 2 sections/);
+  assert.match((await runTool(os, {}, "loft", { sketch_ids: ["A"] }).catch((e) => ({ error: e.message }))).error, /at least 2 sketch ids/);
+}
+function buildShellFor(open) { return buildShell({ feature_id: "F2", thickness: 2, open }).parameters.find((q) => q.parameterId === "entities").queries[0].queryString; }
+console.log("feature tests passed");
