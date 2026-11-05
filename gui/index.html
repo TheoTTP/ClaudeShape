@@ -146,7 +146,7 @@ async function send(text,imgs=[]){
         if(e.type==="user"&&problems<4){for(const c of e.message?.content||[]){if(c.type!=="tool_result")continue;
           const raw=(Array.isArray(c.content)?c.content.map(x=>x.text||"").join(" "):String(c.content||""));let msg="";
           try{const j=JSON.parse(raw);msg=j.error||(j.warning?j.warning+(j.reason?": "+j.reason:""):"")||(j.problems&&j.problems[0]&&(j.problems[0].feature+": "+j.problems[0].error))||((j.built||[]).find(b=>b.warning)||{}).warning||""}catch{if(c.is_error)msg=raw}
-          if(msg&&problems<4){problems++;const n=step("Problem: "+String(msg).replace(/\s+/g," ").slice(0,170));n.className="step note warn"}}}
+          if(msg&&problems<4){problems++;const n=step("Problem: "+String(msg).replace(/\s+/g," ").slice(0,300));n.className="step note warn"}}}
         if(e.type==="assistant")turnIds.add(e.message?.id||("e"+turnIds.size));
         if(e.type==="assistant"){for(const c of e.message?.content||[]){
           if(c.type==="tool_use"){think.remove();ai=null;const n=c.name.replace(/^mcp__claudeshape__/,"");step("• "+(FRIENDLY[n]||n)+"…")}

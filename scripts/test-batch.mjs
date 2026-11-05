@@ -470,3 +470,35 @@ console.log("edit feature tests passed");
   assert.match((await bad({ radius: 30, sections: [{ length: 200, r: 5 }] })).error, /turns .* degrees/);
 }
 console.log("bend tube tests passed");
+
+// ---- part metadata that is not there yet (Onshape answers 404 right after parts are created) ----
+{
+  const { stylePart, resetMetaDown } = await import("../lib/onshape.js");
+  const e404 = () => Object.assign(new Error("Onshape GET /api/v10/metadata/... -> 404: Not found."), { status: 404 });
+  const meta = { Name: "Part 1", Appearance: { color: { red: 1, green: 2, blue: 3 }, opacity: 255 } };
+  const mk = (failFirst) => { let n = 0; return { metaDelays: [1, 1, 1], calls: () => n,
+    getPartMetadata: async () => { n++; if (n <= failFirst) throw e404(); return { properties: [{ name: "Name", propertyId: "n", value: meta.Name }, { name: "Appearance", propertyId: "a", value: meta.Appearance }] }; },
+    updatePartMetadata: async (_c, _p, props) => { for (const q of props) { if (q.propertyId === "n") meta.Name = q.value; else meta.Appearance = q.value; } return {}; },
+    getElementMetadata: async () => ({}), getParts: async () => [{ partId: "P1" }] }; };
+
+  resetMetaDown();
+  const ok = mk(2);                                                                                      // 404 twice, then it appears
+  const r = await stylePart(ok, { did: "D1", eid: "E1" }, "P1", { color: "red" });
+  assert.equal(r.colored, true); assert.ok(ok.calls() >= 3, "it waited and retried");
+
+  resetMetaDown();
+  const never = mk(99);                                                                                  // never appears: a diagnosis, then fast skips
+  const err = await stylePart(never, { did: "D2", eid: "E2" }, "P1", { color: "red" }).catch((e) => e);
+  assert.match(err.message, /no metadata for part P1 \(404 after 4 tries/); assert.match(err.message, /element metadata: ok; 1 parts listed/);
+  const before = never.calls();
+  const again = await stylePart(never, { did: "D2", eid: "E2" }, "P2", { color: "red" }).catch((e) => e);
+  assert.match(again.message, /skipped/); assert.equal(never.calls(), before, "no more waiting for the same document");
+  const other = mk(0);                                                                                   // a different document is unaffected
+  assert.equal((await stylePart(other, { did: "D3", eid: "E3" }, "P1", { color: "blue" })).colored, true);
+
+  // anything that is not a 404 is not retried
+  const boom = { metaDelays: [1, 1], getPartMetadata: async () => { throw Object.assign(new Error("403 forbidden"), { status: 403 }); } };
+  await assert.rejects(stylePart(boom, { did: "D4", eid: "E4" }, "P1", { color: "red" }), /403/);
+  resetMetaDown();
+}
+console.log("metadata retry tests passed");
