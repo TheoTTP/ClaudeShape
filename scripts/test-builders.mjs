@@ -87,4 +87,19 @@ const tok = seal({ a: "x", e: 1 });
 assert.deepEqual(unseal(tok), { a: "x", e: 1 });
 assert.equal(unseal(tok.slice(0, -2) + "AA"), null);
 assert.equal(unseal("garbage"), null);
+// fillet edge selection + preview views
+import { buildEdgeFeature, VIEWS } from "../lib/onshape.js";
+const eq = (kind, edges) => buildEdgeFeature(kind, { feature_id: "E1", size: 2, edges }).parameters.find((p) => p.parameterId === "entities").queries[0].queryString;
+assert.match(eq("fillet", "all"), /^query=qCreatedBy\(makeId\("E1"\), EntityType.EDGE\);$/);
+assert.match(eq("fillet", "vertical"), /qParallelEdges\(qCreatedBy\(makeId\("E1"\), EntityType.EDGE\), vector\(0, 0, 1\)\)/);
+assert.match(eq("chamfer", "horizontal"), /qSubtraction\(/);
+assert.throws(() => eq("fillet", "diagonal"), /edges must be/);
+for (const [name, m] of Object.entries(VIEWS)) {            // rows must be an orthonormal, right-handed rotation
+  const [r, u, b] = [m.slice(0, 3), m.slice(4, 7), m.slice(8, 11)];
+  const dot = (a, c) => a[0] * c[0] + a[1] * c[1] + a[2] * c[2];
+  assert.ok(Math.abs(dot(r, r) - 1) < 1e-3 && Math.abs(dot(u, u) - 1) < 1e-3 && Math.abs(dot(b, b) - 1) < 1e-3, name + " unit");
+  assert.ok(Math.abs(dot(r, u)) < 1e-3 && Math.abs(dot(r, b)) < 1e-3 && Math.abs(dot(u, b)) < 1e-3, name + " orthogonal");
+  const cross = [r[1] * u[2] - r[2] * u[1], r[2] * u[0] - r[0] * u[2], r[0] * u[1] - r[1] * u[0]];
+  assert.ok(Math.abs(dot(cross, b) - 1) < 1e-3, name + " right-handed");
+}
 console.log("builder tests passed");

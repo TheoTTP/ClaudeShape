@@ -12,6 +12,7 @@ const fake = http.createServer((req, res) => {
     if (req.method === "POST" && req.url === "/api/v10/documents") return res.end(JSON.stringify({ id: "aaa", defaultWorkspace: { id: "bbb" } }));
     if (req.url.endsWith("/elements")) return res.end(JSON.stringify([{ id: "ccc", elementType: "PARTSTUDIO" }]));
     if (req.method === "POST" && req.url.endsWith("/features")) return res.end(JSON.stringify({ feature: { featureId: "F1", name: "x" }, featureState: { featureStatus: "OK" } }));
+    if (req.url.includes("/shadedviews")) return res.end(JSON.stringify({ images: ["iVBORw0KGgo="] }));
     res.end("{}");
   });
 }).listen(4201);
@@ -29,5 +30,8 @@ assert.match(await call("create_sketch", { plane: "top", shapes: [] }), /No docu
 assert.match(await call("new_document", { name: "Plate" }), /documents\/aaa\/w\/bbb\/e\/ccc/);
 assert.match(await call("create_sketch", { plane: "top", shapes: [{ type: "circle", r: 5 }] }), /"featureId":"F1"/);
 assert.match(await call("open_document", { url: "https://cad.onshape.com/documents/1a2b/w/3c4d/e/5e6f" }), /1a2b/);
+const pv = await client.callTool({ name: "preview", arguments: { view: "iso" } });
+assert.equal(pv.content[0].type, "image"); assert.equal(pv.content[0].mimeType, "image/png");
+assert.ok(seen.some((u) => u.includes("shadedviews?viewMatrix=")));
 console.log("mcp smoke passed:", names.length, "tools");
 await client.close(); fake.close();

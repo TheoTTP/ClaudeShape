@@ -4,7 +4,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { Onshape } from "./lib/onshape.js";
-import { tools, runTool } from "./lib/agent.js";
+import { tools, runTool, DESIGN_RULES } from "./lib/agent.js";
 import { loadKeys } from "./lib/config.js";
 
 const BASE = process.env.ONSHAPE_BASE_URL || "https://cad.onshape.com";
@@ -42,7 +42,7 @@ const intro = [
   },
 ];
 
-const guide = `ClaudeShape CAD tools (Onshape). Units are mm. Typical flow: new_document -> create_sketch -> extrude/revolve -> fillet/pattern. Check each result's status and call get_bounding_box when done. Give the user the Onshape URL at the end.`;
+const guide = `ClaudeShape CAD tools (Onshape). Units are mm. Typical flow: new_document -> create_sketch -> extrude/revolve -> fillet/pattern. Check each result's status and call get_bounding_box when done. Give the user the Onshape URL at the end.\n\n${DESIGN_RULES}`;
 
 const server = new Server({ name: "claudeshape", version: "0.2.0" }, { capabilities: { tools: {} }, instructions: guide });
 
@@ -74,7 +74,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       return reply({ url: urlOf(ctx) });
     }
     if (!ctx) return reply("No document selected. Call new_document (or open_document) first.", true);
-    return reply(await runTool(os, ctx, name, input));
+    const out = await runTool(os, ctx, name, input);
+    if (out && out._image) return { content: [{ type: "image", data: out._image.data, mimeType: out._image.mimeType }, { type: "text", text: `Preview (${out.view}).` }] };
+    return reply(out);
   } catch (e) {
     return reply(`Error: ${e.message}`, true);
   }
