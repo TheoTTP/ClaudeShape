@@ -82,5 +82,5 @@ async function send(text){
 }
 document.getElementById("f").onsubmit=e=>{e.preventDefault();const t=p.value.trim();if(!t||go.disabled)return;p.value="";send(t)};
 p.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();document.getElementById("f").requestSubmit()}});
-document.getElementById("new").onclick=()=>{session=null;log.innerHTML="";location.reload()};
+document.getElementById("new").onclick=async()=>{session=null;await fetch("/reset",{method:"POST",headers:H});location.reload()};
 </script></body></html>

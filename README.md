@@ -61,6 +61,13 @@ First run: paste an Onshape API key in the window, and sign in to Claude Code on
 Claude Code in the background (`claude -p`, restricted to the ClaudeShape tools), so it uses your Claude
 login and needs no API key. The window pings the helper; closing the window stops it.
 
+**Speed:** the window starts Claude (and warms the Onshape connection) as soon as it opens and keeps one Claude
+process running, so messages skip start-up and follow-ups keep their context. If that mode ever misbehaves it falls back
+to one process per message. Set `CLAUDESHAPE_PERSIST=0` to force the fallback.
+
+Notes on Onshape's internals (from field research on the web client, not the REST API) are in
+`docs/ONSHAPE_INTERNALS_GUIDE.md`.
+
 ## In-Onshape panel (right side of a Part Studio)
 
 A prompt box that lives inside Onshape. Whoever hosts it does the setup once; everyone else just clicks the icon.
