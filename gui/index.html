@@ -35,7 +35,7 @@
   #setup a{color:var(--acc)}#setup button{border:0;background:var(--acc);color:#fff;border-radius:10px;padding:9px 18px;font-weight:600;cursor:pointer}
   .dots::after{content:"";animation:d 1.2s steps(4) infinite}@keyframes d{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
 </style></head><body>
-<header><img src="/icons/icon-64.png" alt=""><b>ClaudeShape</b><small id="ver" style="color:var(--mut)"></small><button id="mode" title="Fast: build and answer. Review: also looks at a picture and fixes flaws (slower).">⚡ Fast</button><button id="new">New part</button></header>
+<header><img src="/icons/icon-64.png" alt=""><b>ClaudeShape</b><small id="ver" style="color:var(--mut)"></small><button id="mode" title="Fast: build and answer. Review: also looks at a picture and fixes flaws (slower).">Fast</button><button id="new">New part</button></header>
 <div id="log"><div class="hero" id="hero"><img src="/icons/icon-256.png" alt="">
   <div>What do you want to make?</div></div></div>
 <div id="setup" style="display:none"><h2>One-time setup</h2>
@@ -50,7 +50,7 @@
 const log=document.getElementById("log"),p=document.getElementById("p"),go=document.getElementById("go");
 let session=null;
 let mode=(()=>{try{return localStorage.getItem("cs_mode")==="review"?"review":"fast"}catch{return"fast"}})();
-const modeBtn=document.getElementById("mode"),paintMode=()=>modeBtn.textContent=mode==="fast"?"⚡ Fast":"🔍 Review";paintMode();
+const modeBtn=document.getElementById("mode"),paintMode=()=>modeBtn.textContent=mode==="fast"?"Fast":"Review";paintMode();
 modeBtn.onclick=()=>{mode=mode==="fast"?"review":"fast";try{localStorage.setItem("cs_mode",mode)}catch{}paintMode()};
 const H={"Content-Type":"application/json","x-claudeshape":"1"};
 async function checkKeys(){const s=await (await fetch("/status")).json();document.getElementById("ver").textContent=s.version?"v"+s.version:"";
