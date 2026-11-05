@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os_ from "node:os";
 import path from "node:path";
 import { loadKeys } from "./lib/config.js";
-import { BASE, urlOf, createDocumentWithStudio, takePending, saveCtx, loadCtx } from "./lib/doc.js";
+import { BASE, urlOf, createDocumentWithStudio, takePending, saveCtx, loadCtx, clearCtx } from "./lib/doc.js";
 
 const LOG = path.join(os_.homedir(), ".claudeshape-timing.log");
 function logTiming(tool, total, calls) {
@@ -20,7 +20,11 @@ function logTiming(tool, total, calls) {
 }
 
 let ctx = loadCtx(); // current {did, wid, eid}; shared with the other Claude worker through a small file
-const setCtx = (c) => { ctx = c; saveCtx(c); };
+const setCtx = (c) => { ctx = c; if (c) saveCtx(c); else clearCtx(); };
+
+// Onshape's wording when a document was deleted / trashed / can no longer be opened
+const GONE = /trash|failed to load|document[^.]{0,40}(deleted|not found)|no longer (exist|available)/i;
+const gone = (msg) => GONE.test(String(msg));
 
 const parseUrl = (u) => {
   const m = String(u).match(/documents\/([0-9a-f]+)\/(?:w|v|m)\/([0-9a-f]+)\/e\/([0-9a-f]+)/i);
@@ -87,8 +91,23 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
     let url;
     if (name === "build_steps" && input.new_document) url = await createDoc(input.new_document);   // one call: new doc + build
+    // build_steps with no document yet: just make one (saves Claude a round trip and covers "no document selected")
+    if (!ctx && name === "build_steps") url = await createDoc("ClaudeShape part");
     if (!ctx) return reply("No document selected. Call new_document (or open_document) first.", true);
-    const out = await runTool(os, ctx, name, input);
+    let out;
+    try { out = await runTool(os, ctx, name, input); } catch (e) { out = { error: e.message }; }
+    // The current document was deleted / moved to the trash / can't be opened: start a fresh one and carry on there.
+    if (out?.error && gone(out.error)) {
+      if (name === "build_steps") {
+        url = await createDoc("ClaudeShape part");
+        out = await runTool(os, ctx, name, input);
+        if (out && typeof out === "object") out.note = "The previous document was deleted, so this is a new document. Only this build is in it.";
+      } else {
+        setCtx(null);
+        return reply("The current document was deleted or is in the trash. Call build_steps with new_document to start a new one and rebuild the part there.", true);
+      }
+    }
+    if (out?.error && !out.built) return reply(out.error, true);
     if (out && out._image) {
       const { _image, ...rest } = out;
       return { content: [{ type: "text", text: JSON.stringify({ ...(url ? { url } : {}), ...rest, ...ms() }) }, { type: "image", data: _image.data, mimeType: _image.mimeType }] };
