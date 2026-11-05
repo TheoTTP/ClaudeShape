@@ -54,6 +54,13 @@ assert.ok(rev.parameters.find((p) => p.parameterId === "angle").expression === "
 assert.ok(rev.parameters.find((p) => p.parameterId === "axis").queries[0].queryString.includes('sketchEntityQuery(makeId("S1")'));
 assert.equal(buildRevolve({ sketch_id: "S1", axis_entity_id: "axis" }).parameters.find((p) => p.parameterId === "revolveType").value, "FULL");
 
+// regions: nested islands skipped by default, included on request
+import { buildExtrude } from "../lib/onshape.js";
+const q = (f) => f.parameters.find((p) => p.parameterId === "entities").queries[0].queryString;
+assert.equal(q(buildExtrude({ sketch_id: "S1", depth: 5 })), 'query=qSketchRegion(makeId("S1"), true);');
+assert.equal(q(buildExtrude({ sketch_id: "S1", depth: 5, include_islands: true })), 'query=qSketchRegion(makeId("S1"), false);');
+assert.ok(q(buildRevolve({ sketch_id: "S1", axis_entity_id: "a" })).includes("qSketchRegion"));
+
 // patterns
 const lp = buildLinearPattern({ feature_id: "F1", kind: "feature", helper_sketch_id: "S", helper_entity_id: "axis", spacing: 12, count: 4 });
 assert.ok(lp.parameters.some((p) => p.btType.startsWith("BTMParameterFeatureList")));
