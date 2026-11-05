@@ -31,3 +31,29 @@ const bad2 = await runTool(mkOs(), {}, "build_steps", { steps: [{ tool: "create_
 assert.match(bad2.error, /Unknown shape/);
 assert.match((await runTool(mkOs(), {}, "build_steps", { steps: [{ tool: "list_features", input: {} }] })).error, /can't be used/);
 console.log("batch tests passed");
+
+// ---- sketches are posted fully defined, with a safe fallback ----
+{
+  const calls = [];
+  const sk = { plane: "top", shapes: [{ type: "rectangle", width: 10, height: 10 }, { type: "circle", r: 2, cx: 5, cy: 5 }] };
+  const ok = { addFeature: async (_c, f) => { calls.push(f); return { feature: { featureId: "S1" }, featureState: { featureStatus: "OK" } }; }, deleteFeature: async () => ({}) };
+  const r1 = await runTool(ok, {}, "create_sketch", sk);
+  assert.equal(r1.defined, "fully");
+  const f = calls[0];
+  assert.equal(f.constraints.length, f.entities.length);                       // one FIX per entity (4 lines + circle)
+  assert.equal(new Set(f.constraints.map((c) => c.entityId)).size, f.constraints.length);
+  assert.ok(f.constraints.every((c) => c.constraintType === "FIX" && f.entities.some((e) => e.entityId === c.parameters[0].value)));
+
+  // Onshape throws on constraints -> retried plain
+  calls.length = 0;
+  const throws = { addFeature: async (_c, f) => { calls.push(f); if (f.constraints.length) throw new Error("400"); return { feature: { featureId: "S2" }, featureState: { featureStatus: "OK" } }; }, deleteFeature: async () => ({}) };
+  const r2 = await runTool(throws, {}, "create_sketch", sk);
+  assert.equal(calls.length, 2); assert.equal(calls[1].constraints.length, 0); assert.match(r2.defined, /^no/); assert.equal(r2.featureId, "S2");
+
+  // Onshape accepts but reports ERROR -> the bad sketch is deleted, then retried plain
+  calls.length = 0; const deleted = [];
+  const errs = { addFeature: async (_c, f) => { calls.push(f); const bad = f.constraints.length > 0; return { feature: { featureId: bad ? "BAD" : "S3" }, featureState: { featureStatus: bad ? "ERROR" : "OK" } }; }, deleteFeature: async (_c, id) => { deleted.push(id); } };
+  const r3 = await runTool(errs, {}, "create_sketch", sk);
+  assert.deepEqual(deleted, ["BAD"]); assert.equal(r3.featureId, "S3");
+}
+console.log("sketch-definition tests passed");
