@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClaudeShape</title>
+<link rel="icon" href="icon-32.png">
+<style>
+  :root{--bg:#fff;--fg:#232b2d;--mut:#6b7678;--line:#e3e6e7;--acc:#dc724e;--accfg:#fff;--card:#f5f6f6;--err:#b3261e}
+  @media(prefers-color-scheme:dark){:root{--bg:#1f2527;--fg:#e8ecec;--mut:#9aa5a7;--line:#344043;--card:#283033}}
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--fg);display:flex;flex-direction:column;height:100vh}
+  header{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+  header img{height:28px}
+  header b{font-size:16px}
+  #ctx{margin-left:auto;color:var(--mut);font-size:12px}
+  #log{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:8px}
+  .msg{padding:8px 12px;border-radius:10px;background:var(--card);max-width:760px;white-space:pre-wrap}
+  .me{background:var(--acc);color:var(--accfg);align-self:flex-end}
+  .tool{font:12px ui-monospace,monospace;color:var(--mut);background:none;padding:2px 12px}
+  .tool.err{color:var(--err)}
+  .empty{margin:auto;text-align:center;color:var(--mut)}
+  .empty img{height:96px;margin-bottom:8px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:10px}
+  .chips button{border:1px solid var(--line);background:none;color:var(--fg);border-radius:14px;padding:4px 10px;cursor:pointer}
+  form{display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--line)}
+  textarea{flex:1;resize:none;height:56px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
+  #go{border:0;background:var(--acc);color:var(--accfg);border-radius:8px;padding:0 18px;font-weight:600;cursor:pointer}
+  #go:disabled{opacity:.5;cursor:default}
+  #banner{padding:10px 14px;background:var(--card);border-bottom:1px solid var(--line);display:none}
+  a{color:var(--acc)}
+</style>
+</head>
+<body>
+<header><img src="icon-64.png" alt=""><b>ClaudeShape</b><span id="ctx"></span></header>
+<div id="banner"></div>
+<div id="log">
+  <div class="empty" id="empty">
+    <img src="icon-256.png" alt="">
+    <div>Describe a part and Claude will model it in this Part Studio.</div>
+    <div class="chips">
+      <button>A 60×40×10 mm plate with four 5 mm corner holes</button>
+      <button>A hex nut for an M8 bolt, 6.5 mm thick</button>
+      <button>An L-bracket 50 mm per leg, 3 mm thick, with filleted edges</button>
+    </div>
+  </div>
+</div>
+<form id="f">
+  <textarea id="p" placeholder="e.g. a 40 mm cube with a 20 mm hole through the middle" autofocus></textarea>
+  <button id="go">Build</button>
+</form>
+<script src="app.js"></script>
+</body>
+</html>
