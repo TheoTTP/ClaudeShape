@@ -64,7 +64,7 @@ const fakeOnshape = (obeys) => {
   const down = await calibrateRevolve(fakeOnshape(() => "partial-down"));
   assert.equal(down.variant, "v1"); assert.equal(down.flip, true); assert.equal(revolveFlip(), true);
   const { expandMacro } = await import("../lib/agent.js");
-  const ax = expandMacro({ tool: "bend_tube", input: { radius: 600, sections: [{ length: 20, r: 10 }] } }, "h").find((x) => x.tool === "create_sketch").input.shapes[1];
+  const ax = expandMacro({ tool: "bend_tube", input: { radius: 600, method: "revolve", sections: [{ length: 20, r: 10 }] } }, "h").find((x) => x.tool === "create_sketch").input.shapes[1];
   assert.ok(ax.y1 > ax.y2, "bend axis is reversed automatically when the test showed it turning downward");
 
   // nothing works -> remembered as a failure, not retried for a day, and v1 stays the default
@@ -86,7 +86,7 @@ const fakeOnshape = (obeys) => {
     getBoundingBox: async () => ({ lowX: 0, lowY: 0, lowZ: -zRangeM / 2, highX: 0, highY: 0, highZ: zRangeM / 2 }),
     getParts: async () => [],
   });
-  const steps = [{ tool: "bend_tube", input: { radius: 600, sections: [{ length: 40, r: 12 }, { length: 60, r: 14 }] } }];
+  const steps = [{ tool: "bend_tube", input: { radius: 600, method: "revolve", sections: [{ length: 40, r: 12 }, { length: 60, r: 14 }] } }];
   const ring = await runTool(mk(1.2), {}, "build_steps", { preview: false, steps });       // 1200 mm across: a full ring
   assert.match(ring.error, /ignored the partial revolve angle/); assert.ok(deleted.length >= 2, "what was built is removed");
   const fine = await runTool(mk(0.1), {}, "build_steps", { preview: false, steps });        // 100 mm: a short curved piece

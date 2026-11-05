@@ -428,7 +428,7 @@ console.log("edit feature tests passed");
   const { expandMacro } = await import("../lib/agent.js");
   const R = 600;
   const secs = [{ length: 20, r: 14, name: "pommel", color: "silver" }, { length: 60, r: 12, name: "grip", color: "black" }, { length: 10, r: 15 }];
-  const steps = expandMacro({ tool: "bend_tube", input: { radius: R, sections: secs, name: "Hilt" } }, "h");
+  const steps = expandMacro({ tool: "bend_tube", input: { radius: R, sections: secs, name: "Hilt", method: "revolve" } }, "h");
   // built from the far end back: the last section first, the first section (no trim needed) last
   assert.deepEqual(steps.filter((x) => x.tool === "revolve" && x.input.operation === "new").map((x) => x.input.name), ["Hilt 3", "Hilt grip", "Hilt pommel"]);
   const deg = (mm) => +((mm / R) * 180 / Math.PI).toFixed(4);
@@ -453,18 +453,18 @@ console.log("edit feature tests passed");
     updatePartMetadata: async (_c, pid, props) => { for (const q of props) { if (q.propertyId === "n") meta[pid].Name = q.value; else meta[pid].Appearance = q.value; } return {}; },
     getBoundingBox: async () => ({ lowX: -0.015, lowY: -0.015, lowZ: 0, highX: 0.2, highY: 0.015, highZ: 0.09 }),
   };
-  const r = await runTool(os, { eid: "E" }, "build_steps", { preview: false, steps: [{ tool: "bend_tube", input: { radius: R, sections: secs, name: "Hilt" } }] });
+  const r = await runTool(os, { eid: "E" }, "build_steps", { preview: false, steps: [{ tool: "bend_tube", input: { radius: R, sections: secs, name: "Hilt", method: "revolve" } }] });
   assert.equal(r.error, undefined); assert.equal(posted.filter((f) => f.featureType === "revolve").length, 3 + 2);
   assert.deepEqual(Object.values(meta).map((m) => m.Name).sort(), ["Hilt grip", "Hilt pommel"].sort().concat([""]).sort());
   const byName = Object.fromEntries(Object.values(meta).map((m) => [m.Name, m.Appearance.color]));
   assert.deepEqual(byName["Hilt grip"], { red: 24, green: 24, blue: 27 }); assert.deepEqual(byName["Hilt pommel"], { red: 192, green: 192, blue: 198 });
 
   // flip reverses the turning direction by reversing the bend axis
-  const axisDir = (flip) => { const a = expandMacro({ tool: "bend_tube", input: { radius: R, sections: secs, flip } }, "h").find((x) => x.tool === "create_sketch").input.shapes[1]; return Math.sign(a.y2 - a.y1); };
+  const axisDir = (flip) => { const a = expandMacro({ tool: "bend_tube", input: { radius: R, sections: secs, flip, method: "revolve" } }, "h").find((x) => x.tool === "create_sketch").input.shapes[1]; return Math.sign(a.y2 - a.y1); };
   assert.equal(axisDir(false), 1); assert.equal(axisDir(true), -1);
 
   // guards
-  const bad = (input) => runTool(os, {}, "build_steps", { preview: false, steps: [{ tool: "bend_tube", input }] });
+  const bad = (input) => runTool(os, {}, "build_steps", { preview: false, steps: [{ tool: "bend_tube", input: { method: "revolve", ...input } }] });
   assert.match((await bad({ sections: [] })).error, /needs sections/);
   assert.match((await bad({ radius: 20, sections: [{ length: 10, r: 15 }] })).error, /bend radius must be larger/);
   assert.match((await bad({ radius: 30, sections: [{ length: 200, r: 5 }] })).error, /turns .* degrees/);
@@ -502,3 +502,61 @@ console.log("bend tube tests passed");
   resetMetaDown();
 }
 console.log("metadata retry tests passed");
+
+// ---- bend_tube (default "chain"): short tilted cylinders joined by spheres, only full 360-degree revolves ----
+{
+  const { expandMacro } = await import("../lib/agent.js");
+  const { buildSketch } = await import("../lib/onshape.js");
+  const R = 600;
+  const secs = [{ length: 20, r: 14, name: "pommel", color: "silver" }, { length: 60, r: 12, name: "grip", color: "black" }, { length: 10, r: 15 }];
+  const steps = expandMacro({ tool: "bend_tube", input: { radius: R, sections: secs, name: "Hilt" } }, "h");
+
+  assert.ok(steps.filter((x) => x.tool === "revolve").every((x) => x.input.angle === 360), "no partial-angle revolve is needed");
+  assert.ok(steps.every((x) => x.tool !== "__check_bend"));
+  assert.ok(steps.filter((x) => x.tool === "create_sketch").every((x) => x.input.plane === "front"), "everything is drawn in the Front plane (x, z)");
+  // sections stay separate parts (first piece "new", later pieces of the same section "add"); one style step per styled section
+  const ops = steps.filter((x) => x.tool === "revolve").map((x) => `${x.input.name}:${x.input.operation}`);
+  assert.equal(ops.filter((o) => o.endsWith(":new")).length, 3, "three sections -> three separate parts");
+  assert.deepEqual(steps.filter((x) => x.tool === "style_part").map((x) => [x.input.name, x.input.color]), [["Hilt pommel", "silver"], ["Hilt grip", "black"]]);
+
+  // geometry: every piece is a correctly sized half-cylinder along the arc, and pieces of a section meet end to end
+  const C = (s) => [R - R * Math.cos(s / R), R * Math.sin(s / R)];
+  const pieces = steps.filter((x) => x.tool === "create_sketch" && /segment \d+ profile$/.test(x.input.name));
+  const grip = pieces.filter((x) => x.input.name.startsWith("Hilt grip"));
+  assert.ok(grip.length >= 2, "the 60 mm grip is split into several short pieces to follow the curve");
+  const sk = (x) => x.input.shapes[0].points;
+  for (let n = 0; n < grip.length - 1; n++) assert.deepEqual(sk(grip[n])[3].map((v) => +v.toFixed(9)), sk(grip[n + 1])[0].map((v) => +v.toFixed(9)), "pieces share their joint point");
+  const first = sk(grip[0]);
+  assert.ok(Math.abs(Math.hypot(first[1][0] - first[0][0], first[1][1] - first[0][1]) - 12) < 1e-9, "profile is r = 12 wide");
+  const u = [first[3][0] - first[0][0], first[3][1] - first[0][1]], w = [first[1][0] - first[0][0], first[1][1] - first[0][1]];
+  assert.ok(Math.abs(u[0] * w[0] + u[1] * w[1]) < 1e-9, "profile is perpendicular to the axis");
+  assert.ok(Math.hypot(...C(20 + 0)) >= 0);
+  const start = sk(pieces[0]);
+  assert.deepEqual(start[0].map((v) => +v.toFixed(9)), [0, 0]);                                         // the tube starts at the origin
+  const last = sk(pieces.at(-1))[3];
+  const total = 90 - 0.0;                                                                              // end of the last section, minus nothing (last section has no gap)
+  assert.ok(Math.hypot(last[0] - C(total)[0], last[1] - C(total)[1]) < 1e-6, "and ends where the arc says it should");
+  assert.ok(last[0] > 0 && last[1] > 0, "heading up (+Z) and bending toward +X");
+  const g = 0.05, gripEnd = sk(grip.at(-1))[3];
+  assert.ok(Math.hypot(gripEnd[0] - C(80 - g)[0], gripEnd[1] - C(80 - g)[1]) < 1e-6, "sections end 0.05 mm early so they cannot fuse");
+
+  // every sketch really builds, is closed and fully constrained; the axis entity is the one the revolve names
+  for (const x of steps.filter((y) => y.tool === "create_sketch")) {
+    const f = buildSketch({ plane: x.input.plane, shapes: x.input.shapes });
+    assert.ok(f.constraints.length > 0);
+  }
+  const prof = buildSketch({ plane: "front", shapes: steps.find((x) => /segment 1 profile$/.test(x.input?.name)).input.shapes });
+  assert.deepEqual(prof.entities.map((e) => e.entityId), ["e0", "e1", "e2", "e3"]);                      // e3 = P1 -> P0 = the axis
+  const joint = steps.find((x) => x.tool === "create_sketch" && /joint 1 profile$/.test(x.input.name));
+  const jf = buildSketch({ plane: "front", shapes: joint.input.shapes });
+  assert.deepEqual(jf.entities.map((e) => e.entityId), ["e0", "e1"]);                                    // e0 = the arc, e1 = the diameter (axis)
+  assert.ok(jf.entities[0].geometry.btType.includes("Circle") && jf.entities[1].geometry.btType.includes("Line"));
+  assert.ok(Math.abs(jf.entities[0].geometry.radius * 1000 - 12) < 1e-9);
+  assert.ok(steps.filter((x) => x.tool === "revolve" && /joint/.test(x.input.name)).every((x) => x.input.axis_entity_id === "e1" && x.input.operation === "add"));
+  assert.ok(steps.filter((x) => x.tool === "revolve" && /segment/.test(x.input.name)).every((x) => x.input.axis_entity_id === "e3"));
+
+  // finer curve on request
+  const fine = expandMacro({ tool: "bend_tube", input: { radius: R, sections: [{ length: 60, r: 10 }], max_step_deg: 2 } }, "h");
+  assert.ok(fine.filter((x) => /segment \d+$/.test(x.input?.name || "")).length > expandMacro({ tool: "bend_tube", input: { radius: R, sections: [{ length: 60, r: 10 }] } }, "h").filter((x) => /segment \d+$/.test(x.input?.name || "")).length);
+}
+console.log("bend chain tests passed");
