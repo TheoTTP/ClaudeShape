@@ -1,6 +1,7 @@
 // Finds out what Onshape really does with sketch constraints, using a scratch document in your account.
 //   node scripts/sketch-probe.mjs                 try several constraint styles, report which ones Onshape keeps
 //   node scripts/sketch-probe.mjs --shapes        one sketch per shape type with the real constraints (all should be black)
+//   node scripts/sketch-probe.mjs --states <url>  show each feature's real status and error message
 //   node scripts/sketch-probe.mjs --dump <url>    print the constraints of every sketch in a document (e.g. one you drew by hand)
 // Full details are saved to ~/.claudeshape-probe.json; the printed summary is short enough to paste back.
 import fs from "node:fs";
@@ -30,6 +31,17 @@ async function dump(url) {
     console.log(`\nSketch "${f.name}": ${f.entities?.length || 0} entities, ${f.constraints?.length || 0} constraints`);
     for (const c of summarize(f.constraints)) console.log("  ", c.type, c.params.join(" "));
     report[f.name] = { entities: f.entities, constraints: f.constraints };
+  }
+}
+
+async function states(url) {
+  const m = url.match(/documents\/([0-9a-f]+)\/(?:w|v|m)\/([0-9a-f]+)\/e\/([0-9a-f]+)/i);
+  if (!m) throw new Error("Give the full Onshape URL of the Part Studio");
+  const res = await osh.getFeatures({ did: m[1], wid: m[2], eid: m[3] });
+  for (const f of res.features || []) {
+    const st = res.featureStates?.[f.featureId] || {};
+    console.log(`${f.name}: ${st.featureStatus ?? "?"}${st.statusMessage || st.inferredMessage ? " (" + (st.statusMessage || st.inferredMessage) + ")" : ""}${f.constraints ? ` [${f.constraints.length} constraints]` : ""}`);
+    report[f.name] = { state: st, constraints: f.constraints?.length };
   }
 }
 
@@ -93,8 +105,8 @@ async function shapes() {
   console.log("\nOpen the document: which of the 7 sketches are blue (not fully defined)? Black = fully defined.");
 }
 
-const i = process.argv.indexOf("--dump");
-try { await (i > 0 ? dump(process.argv[i + 1]) : process.argv.includes("--shapes") ? shapes() : probe()); }
+const i = process.argv.indexOf("--dump"), k = process.argv.indexOf("--states");
+try { await (k > 0 ? states(process.argv[k + 1]) : i > 0 ? dump(process.argv[i + 1]) : process.argv.includes("--shapes") ? shapes() : probe()); }
 catch (e) { console.error("Probe failed:", e.message); report.error = e.message; }
 fs.writeFileSync(OUT, JSON.stringify(report, null, 2));
 console.log(`\n(full details saved to ${OUT})`);

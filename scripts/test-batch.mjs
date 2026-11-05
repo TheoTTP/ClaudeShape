@@ -98,6 +98,30 @@ console.log("batch tests passed");
   const b = await runTool(os2, {}, "build_steps", { preview: false, steps: [{ tool: "box", input: { width: 10, depth: 10, height: 5 } }, { tool: "create_sketch", input: { plane: "top", shapes: [{ type: "polygon", points: [[0, 0], [5, 0], [0, 5]] }] } }] });
   assert.equal(b.sketches, "2 fully defined");
 }
+// heavy sketch: POST says OK but it fails to solve -> deleted and re-added plain; a normal sketch costs no extra read
+{
+  const calls = [], deleted = []; let reads = 0;
+  const os = {
+    addFeature: async (_c, f) => { calls.push(f); return { feature: { featureId: "T" + calls.length, constraints: f.constraints }, featureState: { featureStatus: "OK" } }; },
+    getFeatures: async () => { reads++; return { features: [], featureStates: { T1: { featureStatus: "ERROR" } } }; },
+    deleteFeature: async (_c, id) => { deleted.push(id); },
+  };
+  const t = await runTool(os, {}, "create_sketch", { plane: "top", shapes: [{ type: "text", text: "HELLO", height: 10 }] });
+  assert.deepEqual(deleted, ["T1"]); assert.equal(calls[1].constraints.length, 0); assert.match(t.defined, /^no/); assert.equal(reads, 1);
+  reads = 0; calls.length = 0;
+  await runTool(os, {}, "create_sketch", { plane: "top", shapes: [{ type: "rectangle", width: 5, height: 5 }] });
+  assert.equal(reads, 0);
+}
+// build_steps reports features that Onshape shows in an error state
+{
+  const os = {
+    addFeature: async (_c, f) => ({ feature: { featureId: f.featureType === "extrude" ? "X1" : "S1", name: f.name, constraints: f.constraints }, featureState: { featureStatus: "OK" } }),
+    getFeatures: async () => ({ features: [{ featureId: "S1", name: "Sk" }, { featureId: "X1", name: "Ex" }, { featureId: "OTHER", name: "Old" }], featureStates: { S1: { featureStatus: "OK" }, X1: { featureStatus: "ERROR", statusMessage: "Sketch region missing" }, OTHER: { featureStatus: "ERROR" } } }),
+    deleteFeature: async () => ({}), getBoundingBox: async () => ({ lowX: 0, lowY: 0, lowZ: 0, highX: 0.01, highY: 0.01, highZ: 0.01 }),
+  };
+  const r = await runTool(os, {}, "build_steps", { preview: false, steps: [{ tool: "box", input: { width: 10, depth: 10, height: 5 } }] });
+  assert.deepEqual(r.problems, [{ feature: "Ex", id: "X1", error: "Sketch region missing" }]);   // only features from this build
+}
 console.log("sketch-definition tests passed");
 
 // ---- extrude round + one-call builds ----
