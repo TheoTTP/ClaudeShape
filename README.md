@@ -4,7 +4,7 @@
 
 An Onshape app that lets Claude do the CAD. Open it in a Part Studio, type
 "a 60×40×10 mm plate with four 5 mm corner holes", and Claude builds it as real,
-editable Onshape features (sketches, extrudes, cuts, fillets, chamfers, offset planes)
+editable Onshape features (sketches with lines/arcs/slots/paths, extrudes, cuts, revolves, fillets, chamfers, offset planes, linear and circular patterns, sketches on existing faces)
 through the Onshape REST API.
 
 ```
@@ -49,7 +49,8 @@ Quick local try (no OAuth): set `ONSHAPE_ACCESS_KEY`/`ONSHAPE_SECRET_KEY` and op
 
 ## Caveats
 
-Feature JSON was written from Onshape's documented schemas but only tested against a mock,
-not a live account — expect to tweak parameter names if Onshape rejects one (errors are
-shown in the chat and fed back to Claude). Not yet supported: revolves, patterns, sketch arcs
-(other than slots), sketching on existing faces.
+Feature JSON was written from Onshape's documented schemas but only tested against mocks
+(`npm test` checks sketch geometry closes up, parameter shapes and the agent loop), not a live
+account. Expect to tweak parameter names if Onshape rejects one; errors are shown in the chat and
+fed back to Claude. The least certain pieces are feature-pattern (`kind: "feature"`) parameters and
+the x/y orientation of sketches placed on existing faces.

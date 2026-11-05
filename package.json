@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "node server.js",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "test": "node scripts/test-builders.mjs && node scripts/smoke.mjs"
   },
   "repository": {
     "type": "git",
