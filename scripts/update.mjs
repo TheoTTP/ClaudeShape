@@ -11,7 +11,7 @@ const ok = (r) => r.status === 0;
 const out = (r) => (r.stdout || "").trim();
 
 export function update(root = defaultRoot) {
-  const git = (...a) => spawnSync("git", a, { cwd: root, encoding: "utf8", timeout: 30000 });
+  const git = (...a) => spawnSync("git", a, { cwd: root, encoding: "utf8", timeout: 10000 });
   if (!fs.existsSync(path.join(root, ".git"))) return "not-a-git-checkout";
   const cur = out(git("rev-parse", "--abbrev-ref", "HEAD"));
   if (!cur || cur === "HEAD") return "detached";
@@ -34,6 +34,13 @@ export function update(root = defaultRoot) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const r = update();
-  spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["install", "--silent", "--no-audit", "--no-fund"], { cwd: defaultRoot, stdio: "ignore", shell: process.platform === "win32" });
+  // npm install only when dependencies changed (saves 1-3 s on every launch)
+  const sig = (() => { try { return fs.readFileSync(path.join(defaultRoot, "package-lock.json"), "utf8").length + ":" + fs.statSync(path.join(defaultRoot, "package.json")).size; } catch { return ""; } })();
+  const stamp = path.join(defaultRoot, "node_modules", ".claudeshape-deps");
+  const had = (() => { try { return fs.readFileSync(stamp, "utf8"); } catch { return null; } })();
+  if (had !== sig) {
+    const n = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["install", "--silent", "--no-audit", "--no-fund"], { cwd: defaultRoot, stdio: "ignore", shell: process.platform === "win32" });
+    if (n.status === 0) { try { fs.writeFileSync(stamp, sig); } catch {} }
+  }
   console.log("update:", r);
 }
