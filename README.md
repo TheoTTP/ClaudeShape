@@ -8,40 +8,50 @@ editable Onshape features (sketches with lines/arcs/slots/paths, extrudes, cuts,
 through the Onshape REST API.
 
 ```
-Onshape tab (iframe)  ──prompt──▶  server.js  ──▶  Claude (tool use)
-                                       │                 │
-                                       └──── Onshape REST API ◀── create_sketch / extrude / fillet …
+You ──▶ Claude ──MCP tools──▶ mcp.js ──▶ Onshape REST API (sketch / extrude / revolve / pattern …)
 ```
 
 Claude reads the current feature list, calls tools, checks each feature's status
 (and the part's bounding box), and fixes errors itself before summarising.
 
-## Run it
+## Quick start (no Anthropic key, no server, no `.env`)
 
 ```bash
 npm install
-cp .env.example .env   # fill in keys
-node --env-file=.env server.js
+npm run setup
 ```
 
-Quick local try (no OAuth): set `ONSHAPE_ACCESS_KEY`/`ONSHAPE_SECRET_KEY` and open
-`http://localhost:3000/?documentId=…&workspaceId=…&elementId=…` using ids from a Part Studio URL
-(`/documents/<did>/w/<wid>/e/<eid>`).
+`setup` asks for one Onshape API key pair (<https://dev-portal.onshape.com/keys>, takes a minute),
+checks it works, saves it to `~/.claudeshape.json`, and registers ClaudeShape with Claude Code
+(`claude mcp add`). It prints the Claude Desktop config line if `claude` isn't installed.
 
-## Register it in Onshape
+Then just talk to Claude:
 
-1. <https://dev-portal.onshape.com> → **OAuth applications → Create**. Redirect URL: `$BASE_URL/oauth/callback`; permissions: read profile, read & write documents. Put the id/secret in `.env`.
-2. Under **Extensions** add a *Element right panel* (or *Element tab*) extension:
-   - Location: Element right panel / Part Studio
-   - Action URL: `$BASE_URL/?documentId={$documentId}&workspaceId={$workspaceId}&elementId={$elementId}`
-   - Icon: `public/icon-512.png` (transparent)
-3. Host over HTTPS (Onshape won't frame http). Cookies are `SameSite=None; Secure` for the iframe.
+> Use ClaudeShape to make a 60×40×10 mm plate with four 5 mm corner holes.
+
+Claude creates a new Onshape document itself, builds the part, and gives you the link.
+It uses your existing Claude subscription, so there is no separate API key and nothing to host.
+
+## Optional: in-Onshape panel
+
+If you want a prompt box inside Onshape itself, `server.js` serves one. That path *does* need an
+`ANTHROPIC_API_KEY`, an HTTPS host and an Onshape OAuth app (see `.env.example`):
+
+```bash
+cp .env.example .env && node --env-file=.env server.js
+```
+
+Register it under <https://dev-portal.onshape.com> as an Element right panel extension with action URL
+`$BASE_URL/?documentId={$documentId}&workspaceId={$workspaceId}&elementId={$elementId}`
+and OAuth redirect `$BASE_URL/oauth/callback`.
 
 ## Files
 
 | | |
 |---|---|
-| `server.js` | Express, Onshape OAuth, streaming `/api/prompt` |
+| `mcp.js` | MCP server: the zero-setup way to use ClaudeShape |
+| `scripts/setup.mjs` | One-time key save + Claude registration |
+| `server.js` | Optional in-Onshape panel (Express, OAuth) |
 | `lib/agent.js` | Claude tool-use loop and tool definitions |
 | `lib/onshape.js` | REST client + feature-JSON builders |
 | `scripts/make-icon.py` | Turns the source logo's white background into alpha |

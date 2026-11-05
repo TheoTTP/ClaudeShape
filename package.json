@@ -9,7 +9,9 @@
   "scripts": {
     "start": "node server.js",
     "smoke": "node scripts/smoke.mjs",
-    "test": "node scripts/test-builders.mjs && node scripts/smoke.mjs"
+    "test": "node scripts/test-builders.mjs && node scripts/smoke.mjs && node scripts/smoke-mcp.mjs",
+    "setup": "node scripts/setup.mjs",
+    "mcp": "node mcp.js"
   },
   "repository": {
     "type": "git",
@@ -21,8 +23,12 @@
   "homepage": "https://github.com/TheoTTP/ClaudeShape#readme",
   "dependencies": {
     "@anthropic-ai/sdk": "^1.5.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "cookie-session": "^2.1.1",
     "express": "^5.3.0"
   },
-  "type": "module"
+  "type": "module",
+  "bin": {
+    "claudeshape": "mcp.js"
+  }
 }
