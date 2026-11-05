@@ -67,4 +67,9 @@ assert.deepEqual(helperAxisPlan("z", [10, 20]), { base: "front", offset: -20, li
 assert.deepEqual(planeQuery("face:JHD").deterministicIds, ["JHD"]);
 const faces = planarFaces({ bodies: [{ id: "B", faces: [{ id: "F1", surface: { type: "plane", origin: [0, 0, 0.01], normal: [0, 0, 1] } }, { id: "F2", surface: { type: "cylinder" } }] }] });
 assert.deepEqual(faces, [{ face_id: "F1", body_id: "B", normal: [0, 0, 1], origin_mm: [0, 0, 10] }]);
+import { seal, unseal } from "../lib/seal.js";
+const tok = seal({ a: "x", e: 1 });
+assert.deepEqual(unseal(tok), { a: "x", e: 1 });
+assert.equal(unseal(tok.slice(0, -2) + "AA"), null);
+assert.equal(unseal("garbage"), null);
 console.log("builder tests passed");

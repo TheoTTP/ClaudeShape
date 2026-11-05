@@ -32,9 +32,9 @@ const claude = http.createServer((req, res) => {
 
 const srv = spawn("node", ["server.js"], {
   env: { ...process.env, PORT: "4100", ONSHAPE_BASE_URL: "http://localhost:4101", ANTHROPIC_BASE_URL: "http://localhost:4102",
-    ANTHROPIC_API_KEY: "k", ONSHAPE_ACCESS_KEY: "a", ONSHAPE_SECRET_KEY: "s" }, stdio: "inherit" });
+    ANTHROPIC_API_KEY: "", ONSHAPE_ACCESS_KEY: "a", ONSHAPE_SECRET_KEY: "s" }, stdio: "inherit" });
 await new Promise((r) => setTimeout(r, 1000));
-const r = await fetch("http://localhost:4100/api/prompt", { method: "POST", headers: { "content-type": "application/json" },
+const r = await fetch("http://localhost:4100/api/prompt", { method: "POST", headers: { "content-type": "application/json", "x-anthropic-key": "user-key" },
   body: JSON.stringify({ prompt: "plate", documentId: "d", workspaceId: "w", elementId: "e" }) });
 console.log((await r.text()).trim());
 console.log(seen.join("\n"));

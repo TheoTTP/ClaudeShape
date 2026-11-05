@@ -1,4 +1,5 @@
 const q = new URLSearchParams(location.search);
+const qs = q.toString();
 const ctx = { documentId: q.get("documentId"), workspaceId: q.get("workspaceId"), elementId: q.get("elementId") };
 const $ = (id) => document.getElementById(id);
 const log = $("log"), form = $("f"), prompt_ = $("p"), go = $("go");
@@ -13,18 +14,42 @@ function add(cls, text) {
   return d;
 }
 
+const store = {
+  get: (k) => { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
+  set: (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} },
+};
+const hdrs = () => ({
+  ...(store.get("os_token") && { "x-onshape-token": store.get("os_token") }),
+  ...(store.get("anthropic_key") && { "x-anthropic-key": store.get("anthropic_key") }),
+});
+const api = async (url, opts = {}) => {
+  const r = await fetch(url, { ...opts, headers: { ...hdrs(), ...(opts.headers || {}) } });
+  const fresh = r.headers.get("x-refreshed-token");
+  if (fresh) store.set("os_token", fresh);
+  return r;
+};
+
+window.addEventListener("message", (e) => {
+  if (e.origin === location.origin && e.data?.claudeshapeToken) { store.set("os_token", e.data.claudeshapeToken); init(); }
+});
+$("akey").value = store.get("anthropic_key");
+$("akey").onchange = () => { store.set("anthropic_key", $("akey").value.trim()); init(); };
+$("clear").onclick = (e) => { e.preventDefault(); store.set("os_token", ""); store.set("anthropic_key", ""); $("akey").value = ""; init(); };
+
 async function init() {
-  const s = await (await fetch("/api/status")).json();
+  const s = await (await api("/api/status?" + qs)).json();
   $("ctx").textContent = ctx.elementId ? "Part Studio connected" : "No Part Studio context";
   const b = $("banner");
-  const warn = [];
-  if (!s.anthropic) warn.push("Server is missing ANTHROPIC_API_KEY.");
-  if (!ctx.elementId) warn.push("Open this app from a Part Studio tab in an Onshape document.");
-  if (!s.signedIn) {
-    const rt = encodeURIComponent(location.pathname + location.search);
-    warn.push(`<a href="/oauth/login?returnTo=${rt}" target="_top">Sign in to Onshape</a> to let Claude edit this document.`);
-  }
-  if (warn.length) { b.innerHTML = warn.join(" "); b.style.display = "block"; }
+  const todo = [];
+  if (!ctx.elementId) todo.push("Open this from a Part Studio tab in an Onshape document.");
+  if (!s.signedIn) todo.push(s.oauthConfigured
+    ? 'Let Claude edit your documents: <button id="si">Sign in to Onshape</button>'
+    : "The server has no Onshape OAuth app configured (see README).");
+  if (!s.serverKey && !store.get("anthropic_key")) { todo.push("Paste your Anthropic API key in Settings."); $("settings").open = true; }
+  b.innerHTML = todo.join("<br>");
+  b.style.display = todo.length ? "block" : "none";
+  const si = $("si");
+  if (si) si.onclick = () => window.open("/oauth/login", "claudeshape-login", "width=520,height=700");
 }
 
 document.querySelectorAll(".chips button").forEach((c) => c.onclick = () => { prompt_.value = c.textContent; prompt_.focus(); });
@@ -38,7 +63,7 @@ form.onsubmit = async (e) => {
   go.disabled = true;
   add("me", text);
   try {
-    const res = await fetch("/api/prompt", {
+    const res = await api("/api/prompt", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prompt: text, ...ctx }),
     });

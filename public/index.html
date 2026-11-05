@@ -29,11 +29,20 @@
   #go:disabled{opacity:.5;cursor:default}
   #banner{padding:10px 14px;background:var(--card);border-bottom:1px solid var(--line);display:none}
   a{color:var(--acc)}
+  #settings{padding:6px 14px;border-bottom:1px solid var(--line);font-size:13px}
+  #settings summary{cursor:pointer;color:var(--mut)}
+  #settings label{display:block;margin:8px 0 4px}
+  #settings input{width:100%;max-width:420px;padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
+  #banner button{border:0;background:var(--acc);color:var(--accfg);border-radius:6px;padding:4px 10px;cursor:pointer;margin-left:6px}
 </style>
 </head>
 <body>
 <header><img src="icon-64.png" alt=""><b>ClaudeShape</b><span id="ctx"></span></header>
 <div id="banner"></div>
+<details id="settings"><summary>Settings</summary>
+  <label>Anthropic API key <input id="akey" type="password" placeholder="sk-ant-..." autocomplete="off"></label>
+  <small>Stored only in this browser and sent with each request. Get one at console.anthropic.com. <a href="#" id="clear">Sign out / forget keys</a></small>
+</details>
 <div id="log">
   <div class="empty" id="empty">
     <img src="icon-256.png" alt="">

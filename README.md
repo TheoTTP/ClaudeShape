@@ -32,18 +32,31 @@ Then just talk to Claude:
 Claude creates a new Onshape document itself, builds the part, and gives you the link.
 It uses your existing Claude subscription, so there is no separate API key and nothing to host.
 
-## Optional: in-Onshape panel
+## In-Onshape panel (right side of a Part Studio)
 
-If you want a prompt box inside Onshape itself, `server.js` serves one. That path *does* need an
-`ANTHROPIC_API_KEY`, an HTTPS host and an Onshape OAuth app (see `.env.example`):
+A prompt box that lives inside Onshape. Whoever hosts it does the setup once; everyone else just clicks the icon.
+The panel has a one-time settings box for **your own Anthropic API key** (kept in your browser only) and a
+**Sign in to Onshape** button (popup, so it works inside Onshape's iframe).
+
+Anthropic has no "Sign in with Claude" for third-party apps, so the panel can't use a Claude subscription.
+That's what the MCP route above is for.
+
+**1. Host it over HTTPS** (Onshape only frames https). Any Node/Docker host works (Render, Fly, Railway, Cloud Run):
 
 ```bash
-cp .env.example .env && node --env-file=.env server.js
+docker build -t claudeshape . && docker run -p 8080:8080 --env-file .env claudeshape
 ```
 
-Register it under <https://dev-portal.onshape.com> as an Element right panel extension with action URL
-`$BASE_URL/?documentId={$documentId}&workspaceId={$workspaceId}&elementId={$elementId}`
-and OAuth redirect `$BASE_URL/oauth/callback`.
+Set `BASE_URL` (your public https URL), `SESSION_SECRET` (any long random string),
+`ONSHAPE_CLIENT_ID` and `ONSHAPE_CLIENT_SECRET`. For a quick try from your laptop,
+`npx cloudflared tunnel --url http://localhost:3000` gives a temporary https URL.
+
+**2. Register the app** at <https://cad.onshape.com/user/developer> (My account > Developer):
+- **OAuth applications > Create**: name `ClaudeShape`; redirect URL `$BASE_URL/oauth/callback`; permissions Read profile, Read documents, Write documents; primary format `https://…` (your BASE_URL). Copy the client id/secret into the server's env.
+- On that app, **Extensions > Add**: name `ClaudeShape`; location **Element right panel**; context **Part Studio**; action URL
+  `$BASE_URL/?documentId={$documentId}&workspaceId={$workspaceId}&elementId={$elementId}`; icon `public/icon-96.png`.
+
+**3. Install**: open any Part Studio; the ClaudeShape icon appears in the right-hand panel strip (if not, accept the app under Account > Applications). Click it, sign in, paste your Anthropic key once, and prompt.
 
 ## Files
 
