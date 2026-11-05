@@ -163,3 +163,53 @@ console.log("macro tests passed");
   assert.ok(t[0].ms >= 25); assert.deepEqual(takeTimings(), []);
 }
 console.log("timing tests passed");
+
+// ---- enclosure + cutout macros ----
+{
+  const posted = [];
+  const os = {
+    addFeature: async (_c, f) => { posted.push(f); return { feature: { featureId: "F" + posted.length }, featureState: { featureStatus: "OK" } }; },
+    deleteFeature: async () => ({}),
+    getBoundingBox: async () => ({ lowX: 0, lowY: 0, lowZ: 0, highX: 0.17, highY: 0.1, highZ: 0.06 }),
+  };
+  const p = (f, id) => f.parameters.find((q) => q.parameterId === id);
+  const rects = (f) => { const xs = f.entities.flatMap((e) => [e.geometry.pntX, e.geometry.pntX + e.geometry.dirX * e.endParam]).map((v) => Math.round(v * 10000) / 10); return [Math.min(...xs), Math.max(...xs)]; };
+
+  const r = await runTool(os, {}, "build_steps", { preview: false, steps: [{ tool: "enclosure", as: "case", input: { width: 80, depth: 100, height: 50, round: 3, thumb_notch: true, lid: { gap: 10 } } }] });
+  assert.equal(r.error, undefined);
+  const names = posted.filter((f) => f.featureType !== "fillet").map((f) => f.name);
+  assert.deepEqual(names, ["Case base walls sketch", "Case base", "Case base floor sketch", "Case base floor", "Case lid lip sketch", "Case lid lip",
+    "Case lid plate sketch", "Case lid plate", "Case notch sketch", "Case finger notch"]);
+  const sk = (n) => posted.find((f) => f.name === n);
+  assert.deepEqual(rects(sk("Case base walls sketch")), [0, 80]);                  // base at x 0..80
+  assert.deepEqual(rects(sk("Case lid plate sketch")), [90, 170]);                 // lid beside it: 80 + 10 gap .. 170
+  const lip = sk("Case lid lip sketch"); assert.deepEqual(rects(lip), [92.8, 167.2]);   // inset by wall 2.5 + clearance 0.3
+  assert.equal(p(posted.find((f) => f.name === "Case lid lip"), "depth").expression, "7 mm");   // plate 3 + lip 4
+  assert.equal(p(posted.find((f) => f.name === "Case lid plate"), "operationType").value, "ADD");
+  const notch = posted.find((f) => f.name === "Case finger notch");
+  assert.equal(p(notch, "operationType").value, "REMOVE"); assert.equal(p(notch, "oppositeDirection").value, true);   // from the front plane into the wall
+  assert.equal(p(notch, "depth").expression, "2.9 mm");
+  assert.match(sk("Case notch sketch").parameters[0].queries[0].queryString, /"Front"/);
+  assert.ok(posted.filter((f) => f.featureType === "fillet").length >= 2);          // base and lid corners rounded
+
+  // cutouts: ports on the front, vents on the bottom; no extra planes
+  posted.length = 0;
+  await runTool(os, {}, "build_steps", { preview: false, steps: [
+    { tool: "cutout", input: { face: "front", a: 10, b: 8, w: 15, h: 6, name: "USB port" } },
+    { tool: "cutout", input: { face: "bottom", a: 20, b: 20, w: 30, h: 3, slot: true, repeat: { nb: 4, db: 6 }, name: "Vents" } },
+    { tool: "cutout", input: { face: "left", a: 5, b: 5, w: 10, h: 4 } }] });
+  assert.equal(posted.filter((f) => f.featureType === "cPlane").length, 0);
+  const usb = posted.find((f) => f.name === "USB port"), vents = posted.find((f) => f.name === "Vents"), left = posted.filter((f) => f.featureType === "extrude").at(-1);
+  assert.equal(p(usb, "oppositeDirection").value, true); assert.equal(p(usb, "depth").expression, "3 mm");
+  assert.equal(p(vents, "oppositeDirection"), undefined); assert.equal(p(left, "oppositeDirection"), undefined);
+  const ventSketch = posted.find((f) => f.name === "Vents sketch");
+  assert.equal(ventSketch.entities.filter((e) => e.geometry.btType.includes("Line")).length, 8);    // 4 slots x 2 straight sides
+  assert.match(posted.find((f) => f.name === "USB port sketch").parameters[0].queries[0].queryString, /"Front"/);
+  assert.match(ventSketch.parameters[0].queries[0].queryString, /"Top"/);
+  assert.match(posted.find((f) => f.name === "Cutout sketch").parameters[0].queries[0].queryString, /"Right"/);
+
+  // guards
+  assert.match((await runTool(os, {}, "build_steps", { preview: false, steps: [{ tool: "cutout", input: { face: "top", w: 1, h: 1 } }] })).error, /face must be/);
+  assert.match((await runTool(os, {}, "build_steps", { preview: false, steps: [{ tool: "enclosure", input: { width: 11, depth: 11, height: 10, wall: 4 } }] })).error, /lid lip does not fit/);
+}
+console.log("enclosure tests passed");
