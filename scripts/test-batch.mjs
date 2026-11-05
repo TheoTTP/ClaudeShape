@@ -312,3 +312,45 @@ console.log("enclosure tests passed");
 }
 function buildShellFor(open) { return buildShell({ feature_id: "F2", thickness: 2, open }).parameters.find((q) => q.parameterId === "entities").queries[0].queryString; }
 console.log("feature tests passed");
+
+// ---- naming and colouring parts ----
+{
+  const { parseColor, stylePart } = await import("../lib/onshape.js");
+  assert.deepEqual(parseColor("red"), [220, 38, 38]); assert.deepEqual(parseColor("#ff8800"), [255, 136, 0]); assert.deepEqual(parseColor("FF8800"), [255, 136, 0]);
+  assert.deepEqual(parseColor([300, -5, 10.4]), [255, 0, 10]); assert.equal(parseColor("chartreuse-ish"), null); assert.equal(parseColor(), null);
+
+  // a fake Onshape that remembers metadata and understands the lookups
+  const meta = { J1: { Name: "Part 1", Appearance: { color: { red: 1, green: 2, blue: 3 }, opacity: 255, isGenerated: true } }, J2: { Name: "Part 2", Appearance: { color: { red: 9, green: 9, blue: 9 }, opacity: 255 } } };
+  const posted = [];
+  const os = {
+    getParts: async () => [{ partId: "J1" }, { partId: "J2" }, { partId: "J3" }],
+    evalFeatureScript: async (_c, script) => ({ result: { message: { value: script.includes('"FX"') ? [{ message: { value: "J1" } }, { message: { value: "J2" } }] : [] } } }),
+    getPartMetadata: async (_c, pid) => ({ properties: [{ name: "Name", propertyId: "pN", value: meta[pid].Name }, { name: "Appearance", propertyId: "pA", value: meta[pid].Appearance }] }),
+    updatePartMetadata: async (_c, pid, props) => { posted.push({ pid, props }); for (const p of props) { if (p.propertyId === "pN") meta[pid].Name = p.value; if (p.propertyId === "pA" && process.env.TEST_IGNORE_COLOR !== "1") meta[pid].Appearance = p.value; } return {}; },
+    addFeature: async () => ({ feature: { featureId: "FX" }, featureState: { featureStatus: "OK" } }),
+  };
+  const r = await runTool(os, {}, "style_part", { feature_id: "FX", name: "Roller", color: "orange" });
+  assert.deepEqual(r, { parts: 2, ok: true });
+  assert.equal(meta.J1.Name, "Roller 1"); assert.equal(meta.J2.Name, "Roller 2");                        // several parts from one feature get numbered
+  assert.deepEqual(meta.J1.Appearance.color, { red: 249, green: 115, blue: 22 }); assert.equal(meta.J1.Appearance.isGenerated, true);   // existing fields kept
+  assert.equal(posted[0].props.find((p) => p.propertyId === "pA").value.opacity, 255);
+  assert.equal(meta.J3, undefined);                                                                       // only parts from that feature are touched
+  assert.match((await runTool(os, {}, "style_part", { feature_id: "NOPE", color: "red" }).catch((e) => ({ error: e.message }))).error, /created no parts/);
+  assert.match((await runTool(os, {}, "style_part", { feature_id: "FX", color: "mauve?" }).catch((e) => ({ error: e.message }))).error, /Unknown colour/);
+  assert.match((await runTool(os, {}, "style_part", { feature_id: "FX" }).catch((e) => ({ error: e.message }))).error, /name and\/or a colour/);
+
+  // Onshape accepts the call but keeps the old colour -> reported honestly, not claimed as done
+  process.env.TEST_IGNORE_COLOR = "1";
+  const w = await runTool(os, {}, "style_part", { feature_id: "FX", color: "blue" });
+  assert.match(w.warning, /colour/); process.env.TEST_IGNORE_COLOR = "0";
+
+  // usable inside build_steps with an alias
+  const os2 = { ...os, addFeature: async (_c, f) => ({ feature: { featureId: f.featureType === "extrude" ? "FX" : "S" + Math.random() }, featureState: { featureStatus: "OK" } }), getBoundingBox: async () => ({ lowX: 0, lowY: 0, lowZ: 0, highX: 0.01, highY: 0.01, highZ: 0.01 }), deleteFeature: async () => ({}) };
+  const b = await runTool(os2, {}, "build_steps", { preview: false, steps: [{ tool: "box", as: "plate", input: { width: 10, depth: 10, height: 3 } }, { tool: "style_part", input: { feature_id: "$plate", name: "Side plate", color: "#112233" } }] });
+  assert.equal(b.error, undefined); assert.equal(b.built.length, 2);
+  // a styling failure is a warning, not a stop
+  const os3 = { ...os2, getParts: async () => { throw new Error("parts unavailable"); } };
+  const c = await runTool(os3, {}, "build_steps", { preview: false, steps: [{ tool: "box", as: "plate", input: { width: 10, depth: 10, height: 3 } }, { tool: "style_part", input: { feature_id: "$plate", color: "red" } }, { tool: "box", input: { width: 5, depth: 5, height: 2, x: 20 } }] });
+  assert.equal(c.error, undefined); assert.equal(c.built.length, 3); assert.match(c.built[1].warning, /could not style/);
+}
+console.log("part styling tests passed");
