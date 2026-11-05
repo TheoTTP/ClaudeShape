@@ -388,3 +388,37 @@ console.log("feature tests passed");
   assert.match((await runTool(os, { eid: "E9" }, "style_part", { feature_id: "NOPE", color: "red" }).catch((e) => ({ error: e.message }))).error, /list_parts/);
 }
 console.log("part styling tests passed");
+
+// ---- editing an existing feature (e.g. new <-> add) ----
+{
+  const { applyFeatureChanges, buildExtrude } = await import("../lib/onshape.js");
+  const ext = buildExtrude({ sketch_id: "S1", depth: 12, operation: "new", name: "Ring" });
+  const par = (f, id) => f.parameters.find((q) => q.parameterId === id);
+
+  const a = applyFeatureChanges(ext, { operation: "add" });
+  assert.equal(par(a.feature, "operationType").value, "ADD"); assert.deepEqual(a.changed, ["operation=ADD"]);
+  assert.equal(par(ext, "operationType").value, "NEW", "the original is not mutated");
+  const b = applyFeatureChanges(ext, { depth: 20, name: "Ring 2", direction: "reverse" });
+  assert.equal(par(b.feature, "depth").expression, "20 mm"); assert.equal(b.feature.name, "Ring 2"); assert.equal(par(b.feature, "oppositeDirection").value, true);
+  assert.equal(par(applyFeatureChanges(b.feature, { direction: "symmetric" }).feature, "endBound").value, "SYMMETRIC");
+  const c = applyFeatureChanges(ext, { parameters: { depth: "1.5 in", endBound: "BLIND" }, suppressed: true });
+  assert.equal(par(c.feature, "depth").expression, "1.5 in"); assert.equal(c.feature.suppressed, true);
+  assert.throws(() => applyFeatureChanges(ext, {}), /Nothing to change/);
+  assert.throws(() => applyFeatureChanges(ext, { operation: "merge" }), /operation must be/);
+  assert.throws(() => applyFeatureChanges(ext, { parameters: { nope: 1 } }), /no parameter/);
+  assert.throws(() => applyFeatureChanges({ parameters: [] }, { operation: "add" }), /no operation mode/);
+
+  // through the tool: reads the live feature, writes it back, reports Onshape's status
+  const features = [{ ...ext, featureId: "X1" }, { btType: "BTMSketch-151", featureId: "S1", featureType: "newSketch", parameters: [] }];
+  const sent = [];
+  const os = { getFeatures: async () => ({ features }), updateFeature: async (_c, id, f) => { sent.push({ id, f }); return { featureState: { featureStatus: "OK" } }; } };
+  const r = await runTool(os, { eid: "E" }, "edit_feature", { feature_id: "X1", operation: "add" });
+  assert.deepEqual(r, { featureId: "X1", changed: ["operation=ADD"], status: "OK" });
+  assert.equal(par(sent[0].f, "operationType").value, "ADD"); assert.equal(sent[0].f.featureId, "X1"); assert.equal(sent[0].id, "X1");
+  assert.match((await runTool(os, {}, "edit_feature", { feature_id: "ZZ", operation: "add" }).catch((e) => ({ error: e.message }))).error, /No feature with id ZZ/);
+  // usable inside build_steps, and a bad edit is reported rather than thrown
+  const os2 = { ...os, addFeature: async (_c, f) => ({ feature: { featureId: f.featureType === "extrude" ? "X1" : "S1" }, featureState: { featureStatus: "OK" } }), deleteFeature: async () => ({}), getBoundingBox: async () => ({ lowX: 0, lowY: 0, lowZ: 0, highX: 0.01, highY: 0.01, highZ: 0.01 }) };
+  const bs = await runTool(os2, {}, "build_steps", { preview: false, steps: [{ tool: "box", as: "bx", input: { width: 10, depth: 10, height: 3 } }, { tool: "edit_feature", input: { feature_id: "$bx", operation: "add" } }] });
+  assert.equal(bs.error, undefined); assert.equal(bs.built.length, 2);
+}
+console.log("edit feature tests passed");
