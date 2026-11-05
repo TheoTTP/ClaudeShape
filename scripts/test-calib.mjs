@@ -8,6 +8,8 @@ process.env.CLAUDESHAPE_TMP = process.env.HOME;
 const { Onshape, tuning, buildRevolve, setRevolveVariant, revolveFlip } = await import("../lib/onshape.js");
 const { calibrateRevolve, loadRevolveCal, applyRevolveCal } = await import("../lib/calib.js");
 const { runTool } = await import("../lib/agent.js");
+const { findLoftTemplate, learnLoft, loadLoft } = await import("../lib/learn.js");
+const { buildLoft, setLoftTemplate } = await import("../lib/onshape.js");
 
 // ---- 1. "429 Too many requests": wait and retry, a few at a time ----
 tuning.backoffMs = 1;
@@ -173,3 +175,36 @@ console.log("calibration tests passed");
   function regionPointOKnow() { return expandMacro({ tool: "bend_tube", input }, "h").filter((x) => x.tool === "create_sketch").length <= 4; }
 }
 console.log("shared sketch tests passed");
+
+
+// ---- 5. learning how a real loft writes its profile list ----
+{
+  const real = { featureType: "loft", parameters: [
+    { btType: "BTMParameterEnum-145", parameterId: "bodyType", value: "SOLID" },
+    { btType: "BTMParameterArray-9999", parameterId: "sections", items: [{ btType: "BTMArrayParameterItem-7777", parameters: [{ btType: "BTMParameterQueryList-148", parameterId: "sectionQuery", queries: [] }] }, { btType: "BTMArrayParameterItem-7777", parameters: [] }] }] };
+  assert.deepEqual(findLoftTemplate([{ featureType: "extrude" }, real]), { array: { btType: "BTMParameterArray-9999", parameterId: "sections" }, item: { btType: "BTMArrayParameterItem-7777" }, inner: { parameterId: "sectionQuery", btType: "BTMParameterQueryList-148" } });
+  assert.equal(findLoftTemplate([{ featureType: "loft", parameters: [{ btType: "BTMParameterArray-1", parameterId: "x", items: [] }] }]), null);
+
+  // default encoding, as sent before anything is learned
+  setLoftTemplate(null);
+  const dflt = buildLoft({ sketch_ids: ["S1", "S2"] }).parameters.find((p) => p.parameterId === "profileSubqueries");
+  assert.equal(dflt.btType, "BTMParameterArray-2025"); assert.equal(dflt.items[0].btType, "BTMArrayParameterItem-1362");
+
+  // learned from a (fake) public document -> used exactly as Onshape wrote it
+  const fake = { request: async (m, url) => { if (url.startsWith("/api/documents?")) return { items: [{ id: "D", defaultWorkspace: { id: "W" } }] }; if (url.includes("/elements")) return [{ id: "E" }]; return { features: [real] }; } };
+  assert.ok(await learnLoft(fake, { pauseMs: 0 }));
+  const t = loadLoft(); assert.equal(t.array.parameterId, "sections");
+  setLoftTemplate(t);
+  const learnedLoft = buildLoft({ sketch_ids: ["S1", "S2", "S3"] }).parameters.find((p) => p.parameterId === "sections");
+  assert.equal(learnedLoft.btType, "BTMParameterArray-9999"); assert.equal(learnedLoft.items.length, 3);
+  assert.equal(learnedLoft.items[2].btType, "BTMArrayParameterItem-7777");
+  assert.equal(learnedLoft.items[2].parameters[0].parameterId, "sectionQuery");
+  assert.match(learnedLoft.items[2].parameters[0].queries[0].queryString, /makeId\("S3"\)/);
+  let calls = 0; const again = await learnLoft({ request: async () => { calls++; return {}; } }, { pauseMs: 0 }); assert.ok(again); assert.equal(calls, 0, "once learned, never searched again");
+
+  // nothing found -> remembered as a failure for a day
+  fs.rmSync(path.join(process.env.HOME, ".claudeshape-loft.json")); setLoftTemplate(null);
+  assert.equal(await learnLoft({ request: async () => ({ items: [] }) }, { pauseMs: 0 }), null);
+  calls = 0; assert.equal(await learnLoft({ request: async () => { calls++; return {}; } }, { pauseMs: 0 }), null); assert.equal(calls, 0);
+}
+console.log("loft learning tests passed");

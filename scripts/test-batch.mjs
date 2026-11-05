@@ -303,7 +303,7 @@ console.log("enclosure tests passed");
   assert.equal(lr.error, undefined);
   assert.deepEqual(posted.map((f) => f.featureType), ["newSketch", "cPlane", "newSketch", "cPlane", "newSketch", "loft"]);     // no plane for z=0
   const loft = posted.at(-1), items = par(loft, "profileSubqueries").items;
-  assert.equal(par(loft, "profileSubqueries").btType, "BTMParameterArray-2"); assert.equal(items.length, 3);
+  assert.equal(par(loft, "profileSubqueries").btType, "BTMParameterArray-2025"); assert.equal(items.length, 3);
   assert.deepEqual(items.map((it) => it.parameters[0].queries[0].queryString.match(/makeId\("(F\d)"\)/)[1]), ["F1", "F3", "F5"]);   // the three sketches, bottom to top
   assert.match(posted[2].parameters[0].queries[0].queryString, /makeId\("F2"\)/);                                                    // section 2 sits on the offset plane
   assert.equal(par(posted[1], "offset").expression, "40 mm");
@@ -600,3 +600,63 @@ console.log("bend chain tests passed");
   assert.deepEqual(Object.values(metaBy).map((m) => m.Name).sort(), ["", "Hilt body", "Hilt grip", "Hilt pommel"].sort());
 }
 console.log("styling speed tests passed");
+
+// ---- ellipse and spline shapes ----
+{
+  const { ellipsePath, sampleSpline, buildSketch } = await import("../lib/onshape.js");
+  // the four-arc oval stays close to a true ellipse and is closed, tangent-continuous and fully constrained
+    const f = buildSketch({ plane: "top", shapes: [{ type: "ellipse", cx: 5, cy: -3, a: 24, b: 20, rotation_deg: 30 }] });
+  assert.equal(f.entities.length, 4);
+  const cons = {}; f.constraints.forEach((c) => (cons[c.constraintType] = (cons[c.constraintType] || 0) + 1));
+  assert.deepEqual(cons, { COINCIDENT: 4, FIX: 4, RADIUS: 4 });
+  // endpoints meet
+  const pt = (en, t) => [en.geometry.xCenter + en.geometry.radius * Math.cos(t), en.geometry.yCenter + en.geometry.radius * Math.sin(t)];
+  const E = f.entities, close = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9;
+  for (let i = 0; i < 4; i++) assert.ok(E.some((o) => close(pt(E[i], E[i].endParam), pt(o, o.startParam))), "arc " + i + " ends where another begins");
+  // nearly round: the four-arc oval is within 1.5% of the short axis (semi-axes 24, 20)
+  let worst = 0;
+  const g0 = buildSketch({ plane: "top", shapes: [{ type: "ellipse", a: 24, b: 20 }] }).entities;
+  for (const en of g0) for (let k = 0; k <= 20; k++) { const t = en.startParam + ((en.endParam - en.startParam) * k) / 20, [x, y] = pt(en, t).map((v) => v * 1000); worst = Math.max(worst, Math.abs(Math.hypot(x / 24, y / 20) - 1) * 20); }
+  assert.ok(worst < 0.3, "oval deviates " + worst.toFixed(3) + " mm from the true ellipse");
+  assert.ok(Math.abs(Math.max(...g0.flatMap((en) => [0, 1, 2, 3, 4, 5, 6].map((k) => pt(en, en.startParam + ((en.endParam - en.startParam) * k) / 6)[0]))) - 0.024) < 1e-9, "reaches the semi-axis 24 mm along x");
+  // a tall ellipse (a < b) is turned 90 degrees; a circle-like one becomes a circle; a very flat one is a fine polygon
+  const tall = buildSketch({ plane: "top", shapes: [{ type: "ellipse", a: 20, b: 24 }] }).entities;
+  assert.ok(Math.max(...tall.flatMap((en) => [0, 3, 6].map((k) => pt(en, en.startParam + ((en.endParam - en.startParam) * k) / 6)[1]))) > 0.0239);
+  // a clearly flatter ellipse is a fine polygon that lies on the true ellipse (semi-axes 20, 10)
+  const flat = buildSketch({ plane: "top", shapes: [{ type: "ellipse", a: 20, b: 10 }] }).entities;
+  assert.ok(flat.length >= 48 && flat.length <= 160);
+  for (const en of flat) { const g = en.geometry, p0 = [g.pntX * 1000, g.pntY * 1000], p1 = [(g.pntX + g.dirX * en.endParam) * 1000, (g.pntY + g.dirY * en.endParam) * 1000]; for (const p of [p0, p1]) assert.ok(Math.abs(Math.hypot(p[0] / 20, p[1] / 10) - 1) < 1e-9, "vertices lie exactly on the ellipse"); }
+  const sag = (() => { const e = flat[0], g = e.geometry, mx = (g.pntX + g.dirX * e.endParam / 2) * 1000, my = (g.pntY + g.dirY * e.endParam / 2) * 1000; return Math.abs(Math.hypot(mx / 20, my / 10) - 1) * 10; })();
+  assert.ok(sag < 0.03, "polygon sags under 0.03 mm from the ellipse");
+  assert.equal(buildSketch({ plane: "top", shapes: [{ type: "ellipse", a: 7, b: 7 }] }).entities[0].geometry.radius, 0.007);
+  assert.ok(buildSketch({ plane: "top", shapes: [{ type: "ellipse", a: 40, b: 5 }] }).entities.length >= 48);
+  assert.throws(() => buildSketch({ plane: "top", shapes: [{ type: "ellipse", a: 0, b: 5 }] }), /must be > 0/);
+
+  // spline: passes through every given point, open or closed
+  const through = [[0, 0], [20, 12], [45, 15], [70, 4]];
+  const sp = sampleSpline(through, false, 12);
+  for (const q of through) assert.ok(sp.some((p) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-9), "passes through " + q);
+  assert.deepEqual(sp[0], [0, 0]); assert.deepEqual(sp.at(-1), [70, 4]);
+  const cl = sampleSpline([[0, 0], [10, 0], [10, 10], [0, 10]], true, 8);
+  assert.equal(cl.length, 4 * 8);
+  const open = buildSketch({ plane: "top", shapes: [{ type: "spline", points: through }] });
+  assert.equal(open.entities.length, sp.length - 1);
+  const closed = buildSketch({ plane: "top", shapes: [{ type: "spline", points: [[0, 0], [10, 0], [10, 10], [0, 10]], closed: true, samples: 6 }] });
+  assert.equal(closed.entities.length, 4 * 6); assert.ok(closed.constraints.length > 0);
+  assert.throws(() => buildSketch({ plane: "top", shapes: [{ type: "spline", points: [[0, 0], [1, 1]] }] }), /at least 3 points/);
+}
+console.log("ellipse and spline tests passed");
+
+// ---- loft_sections along x or y (a part lying along its length) ----
+{
+  const { expandMacro } = await import("../lib/agent.js");
+  const mk = (axis, ats) => expandMacro({ tool: "loft_sections", input: { axis, sections: ats.map((at) => ({ at, shapes: [{ type: "ellipse", a: 10, b: 6 }] })) } }, "m");
+  const x = mk("x", [0, 30, 70, 100]);
+  assert.deepEqual(x.filter((s) => s.tool === "offset_plane").map((s) => [s.input.from_plane, s.input.offset]), [["right", 30], ["right", 70], ["right", 100]]);   // none for position 0
+  assert.equal(x.find((s) => s.tool === "create_sketch").input.plane, "right");
+  assert.deepEqual(mk("y", [0, 40]).filter((s) => s.tool === "offset_plane").map((s) => [s.input.from_plane, s.input.offset]), [["front", -40]]);            // front's normal points to -Y
+  assert.deepEqual(expandMacro({ tool: "loft_sections", input: { sections: [{ z: 0, shapes: [] }, { z: 25, shapes: [] }] } }, "m").filter((s) => s.tool === "offset_plane").map((s) => [s.input.from_plane, s.input.offset]), [["top", 25]]);   // old `z` still works
+  assert.equal(x.at(-1).tool, "loft"); assert.equal(x.at(-1).input.sketch_ids.length, 4);
+  assert.throws(() => mk("w", [0, 1]), /axis must be/);
+}
+console.log("loft axis tests passed");

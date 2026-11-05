@@ -9,8 +9,8 @@ import fs from "node:fs";
 import os_ from "node:os";
 import path from "node:path";
 import { loadKeys } from "./lib/config.js";
-import { loadLearned } from "./lib/learn.js";
-import { setLearned } from "./lib/onshape.js";
+import { loadLearned, loadLoft } from "./lib/learn.js";
+import { setLearned, setLoftTemplate } from "./lib/onshape.js";
 import { applyRevolveCal, applyRegionCal } from "./lib/calib.js";
 import { BASE, urlOf, createDocumentWithStudio, takePending, saveCtx, loadCtx, clearCtx } from "./lib/doc.js";
 
@@ -75,6 +75,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: input = {} } = req.params;
   const t0 = Date.now();
   applyRevolveCal(); applyRegionCal();                                            // how this Onshape wants partial revolve angles
+  setLoftTemplate(loadLoft());                                  // how a real loft writes its profile list, if learned
   setLearned(loadLearned());                                    // Onshape's own dimension format, if it has been learned
   { const cur = loadCtx(); if (cur) ctx = cur; }                 // the other Claude worker may have switched document
   const ms = () => {                                              // lets the window show how long Onshape took
