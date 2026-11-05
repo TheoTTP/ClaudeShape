@@ -109,3 +109,45 @@ console.log("sketch-definition tests passed");
   assert.equal(posted.filter((f) => f.featureType === "fillet").length, 0);
 }
 console.log("round/preview tests passed");
+
+// ---- macros ----
+{
+  const posted = [];
+  const os = {
+    addFeature: async (_c, f) => { posted.push(f); return { feature: { featureId: "F" + posted.length }, featureState: { featureStatus: "OK" } }; },
+    deleteFeature: async () => ({}),
+    getBoundingBox: async () => ({ lowX: 0, lowY: 0, lowZ: 0, highX: 0.08, highY: 0.1, highZ: 0.05 }),
+  };
+  const types = () => posted.map((f) => f.featureType);
+
+  // hollow box: walls sketch (outer+inner rect) -> extrude -> floor sketch -> extrude add; rounded vertical edges
+  const r = await runTool(os, {}, "build_steps", { steps: [{ tool: "box", as: "b", input: { width: 80, depth: 100, height: 50, round: 4, hollow: { wall: 2.5 } } },
+    { tool: "fillet", input: { feature_id: "$b", size: 1, edges: "horizontal" } }] });
+  assert.equal(r.built.length, 2); assert.equal(r.built[0].featureIds.length, 4);       // sketch, extrude (+its fillet), sketch, extrude
+  assert.deepEqual(types(), ["newSketch", "extrude", "fillet", "newSketch", "extrude", "fillet"]);
+  assert.equal(posted[0].entities.filter((e) => e.geometry.btType.includes("Line")).length, 8);   // outer + inner rectangle
+  const ex = (f, id) => f.parameters.find((p) => p.parameterId === id);
+  assert.equal(ex(posted[1], "depth").expression, "50 mm"); assert.equal(ex(posted[4], "operationType").value, "ADD");
+  assert.equal(ex(posted[4], "depth").expression, "2.5 mm");                                      // floor
+  assert.match(posted[2].parameters.find((p) => p.parameterId === "entities").queries[0].queryString, /makeId\("F2"\)/);   // round hits the walls extrude
+  assert.match(posted[5].parameters.find((p) => p.parameterId === "entities").queries[0].queryString, /makeId\("F2"\)/);   // $b = walls extrude
+  assert.deepEqual(r.bounding_box.max_mm, [80, 100, 50]);
+
+  // solid box + cylinder + holes grid
+  posted.length = 0;
+  await runTool(os, {}, "build_steps", { steps: [
+    { tool: "box", input: { width: 60, depth: 40, height: 10, x: -30, y: -20, round: 2 } },
+    { tool: "holes", input: { d: 5, grid: { nx: 2, ny: 2, dx: 50, dy: 30, x0: -25, y0: -15 }, depth: 20 } },
+    { tool: "cylinder", input: { r: 10, height: 5, cx: 0, cy: 0, hollow: { wall: 2, floor: 1 } } }] });
+  const holes = posted.find((f) => f.name === "Holes sketch");
+  assert.equal(holes.entities.length, 4);
+  const centres = holes.entities.map((e) => [e.geometry.xCenter * 1000, e.geometry.yCenter * 1000].map((v) => Math.round(v)));
+  assert.deepEqual(centres.sort(), [[-25, -15], [-25, 15], [25, -15], [25, 15]].sort());
+  assert.equal(ex(posted.find((f) => f.name === "Holes"), "operationType").value, "REMOVE");
+  assert.equal(posted.filter((f) => f.name?.startsWith("Cylinder")).length, 4);                   // wall sketch, wall, floor sketch, floor
+
+  // bad macro input is reported, not thrown; unknown macro-ish tools are rejected
+  assert.match((await runTool(os, {}, "build_steps", { steps: [{ tool: "box", input: { width: 10, depth: 10, height: 5, hollow: { wall: 6 } } }] })).error, /too thick/);
+  assert.match((await runTool(os, {}, "build_steps", { steps: [{ tool: "holes", input: { d: 5 } }] })).error, /holes needs/);
+}
+console.log("macro tests passed");

@@ -6,23 +6,15 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { Onshape } from "./lib/onshape.js";
 import { tools, runTool, DESIGN_RULES } from "./lib/agent.js";
 import { loadKeys } from "./lib/config.js";
+import { BASE, urlOf, createDocumentWithStudio, takePending, saveCtx, loadCtx } from "./lib/doc.js";
 
-const BASE = process.env.ONSHAPE_BASE_URL || "https://cad.onshape.com";
-let ctx = null; // current {did, wid, eid}
+let ctx = loadCtx(); // current {did, wid, eid}; shared with the other Claude worker through a small file
+const setCtx = (c) => { ctx = c; saveCtx(c); };
 
-const urlOf = (c) => `${BASE}/documents/${c.did}/w/${c.wid}/e/${c.eid}`;
 const parseUrl = (u) => {
   const m = String(u).match(/documents\/([0-9a-f]+)\/(?:w|v|m)\/([0-9a-f]+)\/e\/([0-9a-f]+)/i);
   return m ? { did: m[1], wid: m[2], eid: m[3] } : null;
 };
-
-async function ensurePartStudio(os, did, wid) {
-  const find = async () => (await os.getWorkspaceElements(did, wid)).find((e) => e.elementType === "PARTSTUDIO" || e.type === "Part Studio");
-  let el = await find();
-  if (!el) { await os.createPartStudio(did, wid, "Part Studio 1"); el = await find(); }
-  if (!el) throw new Error("Could not find or create a Part Studio");
-  return el.id;
-}
 
 const intro = [
   {
@@ -52,7 +44,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: input = {} } = req.params;
-  const reply = (o, isError) => ({ content: [{ type: "text", text: typeof o === "string" ? o : JSON.stringify(o) }], isError });
+  const t0 = Date.now();
+  { const cur = loadCtx(); if (cur) ctx = cur; }                 // the other Claude worker may have switched document
+  const ms = () => ({ onshape_ms: Date.now() - t0 });            // lets the window show how long Onshape took
+  const reply = (o, isError) => ({ content: [{ type: "text", text: typeof o === "string" ? o : JSON.stringify(Array.isArray(o) ? { items: o, ...ms() } : { ...o, ...ms() }) }], isError });
   const keys = loadKeys();
   if (!keys) return reply("ClaudeShape has no Onshape API keys yet. Ask the user to run `npm run setup` in the ClaudeShape folder (one-time, 1 minute).", true);
   const os = new Onshape(keys);
@@ -62,16 +57,17 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       return reply((r.items || []).map((d) => ({ name: d.name, url: `${BASE}/documents/${d.id}`, id: d.id })));
     }
     const createDoc = async (docName) => {
-      const d = await os.createDocument(docName);
-      const wid = d.defaultWorkspace.id;
-      ctx = { did: d.id, wid, eid: await ensurePartStudio(os, d.id, wid) };
+      // the window usually has one ready already (created while Claude was thinking)
+      const ready = await takePending();
+      if (ready) { setCtx(ready); os.renameDocument(ready.did, docName).catch(() => {}); return urlOf(ctx); }
+      setCtx(await createDocumentWithStudio(os, docName));
       return urlOf(ctx);
     };
     if (name === "new_document") return reply({ url: await createDoc(input.name), message: "Document ready. Open the URL to watch it build." });
     if (name === "open_document") {
       const c = parseUrl(input.url);
       if (!c) return reply("Could not parse that URL. It should look like https://cad.onshape.com/documents/<id>/w/<id>/e/<id>", true);
-      ctx = c;
+      setCtx(c);
       return reply({ url: urlOf(ctx) });
     }
     let url;
@@ -80,7 +76,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const out = await runTool(os, ctx, name, input);
     if (out && out._image) {
       const { _image, ...rest } = out;
-      return { content: [{ type: "text", text: JSON.stringify({ ...(url ? { url } : {}), ...rest }) }, { type: "image", data: _image.data, mimeType: _image.mimeType }] };
+      return { content: [{ type: "text", text: JSON.stringify({ ...(url ? { url } : {}), ...rest, ...ms() }) }, { type: "image", data: _image.data, mimeType: _image.mimeType }] };
     }
     return reply(url ? { url, ...out } : out);
   } catch (e) {

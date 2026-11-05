@@ -21,6 +21,7 @@
   .step{align-self:flex-start;color:var(--mut);font-size:13px;padding:0 6px}
   .err{color:var(--err)}
   .timing{align-self:flex-start;font-size:13px;font-weight:600;color:var(--mut);padding:0 6px}.timing.ok{color:var(--acc)}.timing.bad{color:var(--err)}
+  .open.early{align-self:flex-start;margin:0 0 0 6px}
   .open{display:inline-block;margin-top:8px;background:var(--acc);color:#fff;text-decoration:none;padding:7px 14px;border-radius:9px;font-weight:600}
   .hero{margin:auto;text-align:center;color:var(--mut)}.hero img{height:110px;margin-bottom:10px}
   .chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px}
@@ -66,7 +67,7 @@ const FRIENDLY={build_steps:"Building the model",preview:"Checking how it looks"
 function bubble(cls,text){document.getElementById("hero")?.remove();const d=document.createElement("div");d.className="b "+cls;d.textContent=text;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
 function step(t){document.getElementById("hero")?.remove();const d=document.createElement("div");d.className="step";d.textContent=t;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
 // Small, safe markdown renderer (no innerHTML): headings, **bold**, *italic*, `code`, lists, links, paragraphs.
-const ONSHAPE=/https:\/\/cad\.onshape\.com\/documents\/[^\s)>\]]+/g;
+const ONSHAPE=/https:\/\/cad\.onshape\.com\/documents\/[0-9a-f]+\/w\/[0-9a-f]+\/e\/[0-9a-f]+/g;
 function inline(parent,text){
   const re=/(\*\*[^*\n]+?\*\*|__[^_\n]+?__|`[^`\n]+`|\*[^*\s][^*\n]*?\*|https?:\/\/[^\s)<>\]]+)/g;let last=0,m;
   while((m=re.exec(text))){
@@ -77,7 +78,7 @@ function inline(parent,text){
     else{n=document.createElement("a");n.href=t;n.target="_blank";n.rel="noopener";n.textContent=t}
     parent.append(n);last=m.index+t.length}
   parent.append(text.slice(last))}
-function render(el,text){
+function render(el,text,noButton){
   el.textContent="";let list=null,para=null;
   const close=()=>{list=null;para=null};
   for(const raw of text.split("\n")){
@@ -92,7 +93,7 @@ function render(el,text){
     list=null;
     if(!para){para=document.createElement("p");el.append(para)}else para.append(document.createElement("br"));
     inline(para,line.trim())}
-  const links=text.match(ONSHAPE);
+  const links=noButton?null:text.match(ONSHAPE);
   if(links){const a=document.createElement("a");a.className="open";a.href=links[links.length-1];a.target="_blank";a.rel="noopener";a.textContent="Open in Onshape ↗";el.append(a)}}
 const fmtTime=ms=>{const t=Math.max(1,Math.round(ms/1000)),m=Math.floor(t/60);return m?`${m}m ${t%60}s`:t+"s"};   // whole seconds: 1s, 2s … 1m 5s
 async function send(text){
@@ -100,7 +101,7 @@ async function send(text){
   // timer line at the top of the response: ticks while working, then reads "Done in …"
   const t0=performance.now(),timer=step("Working… 0s");timer.className="timing";
   const tick=setInterval(()=>{timer.textContent="Working… "+fmtTime(performance.now()-t0)},1000);
-  let failed=false,detail="";
+  let failed=false,detail="",detailParts=null,openBtn=null,onshapeMs=0;
   const think=step("Thinking");think.className="step dots";
   try{
     const r=await fetch("/chat",{method:"POST",headers:H,body:JSON.stringify({prompt:text,session,mode})});
@@ -108,16 +109,20 @@ async function send(text){
     for(;;){const{value,done}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
       while((i=buf.indexOf("\n"))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line.trim())continue;let e;try{e=JSON.parse(line)}catch{continue}
         if(e.session_id)session=e.session_id;
+        // the document link appears the moment Claude's tools create it, so you can watch it build
+        if(!openBtn){const m=line.match(ONSHAPE);if(m){openBtn=document.createElement("a");openBtn.className="open early";openBtn.href=m[0];openBtn.target="_blank";openBtn.rel="noopener";openBtn.textContent="Open in Onshape ↗";timer.after(openBtn)}}
+        for(const m of line.matchAll(/onshape_ms\\?"\s*:\s*(\d+)/g))onshapeMs+=+m[1];
         if(e.type==="assistant"){for(const c of e.message?.content||[]){
           if(c.type==="tool_use"){think.remove();const n=c.name.replace(/^mcp__claudeshape__/,"");step("• "+(FRIENDLY[n]||n)+"…")}
-          if(c.type==="text"&&c.text.trim()){think.remove();ai=ai||bubble("ai","");ai.dataset.t=(ai.dataset.t?ai.dataset.t+"\n\n":"")+c.text.trim();render(ai,ai.dataset.t)}}}
-        if(e.type==="result"){final=e.result;if(e.duration_api_ms!=null){const api=fmtTime(e.duration_api_ms),turns=e.num_turns;detail=` · Claude ${api}${turns?` · ${turns} turn${turns>1?"s":""}`:""}`}if(e.is_error){failed=true;bubble("ai err",e.result||"Something went wrong.")}}
+          if(c.type==="text"&&c.text.trim()){think.remove();ai=ai||bubble("ai","");ai.dataset.t=(ai.dataset.t?ai.dataset.t+"\n\n":"")+c.text.trim();render(ai,ai.dataset.t,!!openBtn)}}}
+        if(e.type==="result"){final=e.result;if(e.duration_api_ms!=null){const api=fmtTime(e.duration_api_ms),turns=e.num_turns;detailParts={claude:api,turns}}if(e.is_error){failed=true;bubble("ai err",e.result||"Something went wrong.")}}
         if(e.type==="gui_error"){failed=true;bubble("ai err",e.message)}
       }}
     think.remove();
-    if(final&&!ai)render(bubble("ai",""),final);
+    if(final&&!ai)render(bubble("ai",""),final,!!openBtn);
   }catch(err){failed=true;think.remove();bubble("ai err",err.message)}
   clearInterval(tick);
+  if(detailParts){detail=` · Claude ${detailParts.claude}`+(onshapeMs?` · Onshape ${fmtTime(onshapeMs)}`:"")+(detailParts.turns?` · ${detailParts.turns} turn${detailParts.turns>1?"s":""}`:"")}
   timer.textContent=(failed?"Stopped after ":"Done in ")+fmtTime(performance.now()-t0)+(failed?"":detail);timer.classList.add(failed?"bad":"ok");
   go.disabled=false;p.focus();
 }

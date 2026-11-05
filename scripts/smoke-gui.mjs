@@ -11,7 +11,7 @@ const fake = path.join(dir, "claude");
 fs.writeFileSync(fake, `#!/usr/bin/env node
 const a = process.argv.slice(2);
 const out = (o) => console.log(JSON.stringify(o));
-const flags = { lean: a.includes("--strict-mcp-config") && a.includes("--model") };
+const flags = { lean: a.includes("--strict-mcp-config") && a.includes("--model"), model: a[a.indexOf("--model") + 1] };
 if (process.env.FAKE_OLD && a.includes("--tools")) { console.error("error: unknown option '--tools'"); process.exit(1); }
 const reply = (extra) => {
   out({ type: "assistant", session_id: "sess1", message: { content: [{ type: "tool_use", name: "mcp__claudeshape__new_document", input: {} }] } });
@@ -72,6 +72,33 @@ const last = (ev) => ev.at(-1);
   const s = await server({ FAKE_OLD: "1", CLAUDESHAPE_PERSIST: "0" });
   const a = await s.chat("x"); assert.equal(last(a).type, "result"); assert.equal(last(a).lean, false);
   s.srv.kill();
+}
+// 4b. Fast and Review use different models, each in its own long-lived process
+{
+  const s = await server();
+  const f = last(await s.post("/chat", { prompt: "x", mode: "fast" })), r = last(await s.post("/chat", { prompt: "x", mode: "review" }));
+  assert.equal(f.model, "haiku"); assert.equal(r.model, "sonnet"); assert.notEqual(f.pid, r.pid);
+  assert.equal(last(await s.post("/chat", { prompt: "y", mode: "fast" })).pid, f.pid);        // Fast worker reused
+  s.srv.kill();
+}
+// 4c. the Onshape document is created as soon as the first message arrives (not for follow-ups)
+{
+  const hits = [];
+  const fakeOnshape = (await import("node:http")).createServer((req, res) => {
+    hits.push(`${req.method} ${req.url}`); res.setHeader("content-type", "application/json");
+    if (req.method === "POST" && req.url.endsWith("/documents")) return res.end(JSON.stringify({ id: "aa", defaultWorkspace: { id: "bb" } }));
+    if (req.url.endsWith("/elements")) return res.end(JSON.stringify([{ id: "cc", elementType: "PARTSTUDIO" }]));
+    res.end("{}");
+  }).listen(4789);
+  const T = fs.mkdtempSync(path.join(os.tmpdir(), "pre-"));
+  fs.writeFileSync(path.join(T, ".claudeshape.json"), JSON.stringify({ accessKey: "a", secretKey: "b" }));
+  const s = await server({ HOME: T, USERPROFILE: T, ONSHAPE_BASE_URL: "http://localhost:4789", CLAUDESHAPE_TMP: T });
+  await s.chat("first"); await new Promise((r) => setTimeout(r, 400));
+  assert.equal(hits.filter((h) => h.startsWith("POST") && h.endsWith("/documents")).length, 1);
+  assert.ok(fs.existsSync(path.join(T, "claudeshape-pending.json")));
+  await s.chat("second"); await new Promise((r) => setTimeout(r, 300));
+  assert.equal(hits.filter((h) => h.startsWith("POST") && h.endsWith("/documents")).length, 1, "follow-ups must not create another document");
+  s.srv.kill(); fakeOnshape.close();
 }
 // 5. CSRF guard + status
 {

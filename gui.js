@@ -10,13 +10,15 @@ import { Onshape } from "./lib/onshape.js";
 import { loadKeys, saveKeys } from "./lib/config.js";
 import { claudeCandidates } from "./lib/claude-bin.js";
 import { DESIGN_RULES } from "./lib/agent.js";
+import { precreate, clearAll } from "./lib/doc.js";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.CLAUDESHAPE_PORT || 4567);
 const URL_ = `http://127.0.0.1:${PORT}`;
 const IDLE_MS = 45_000;
-const MODEL = process.env.CLAUDESHAPE_MODEL || "sonnet"; // cheaper than the default; set CLAUDESHAPE_MODEL=opus for hard parts
+// Fast mode uses the quicker model, Review mode the stronger one. Override with CLAUDESHAPE_FAST_MODEL / CLAUDESHAPE_MODEL.
+const MODELS = { fast: process.env.CLAUDESHAPE_FAST_MODEL || "haiku", review: process.env.CLAUDESHAPE_MODEL || "sonnet" };
 // Extended thinking is the biggest per-message delay; off by default (set CLAUDESHAPE_THINKING=4000 to allow some).
 const CHILD_ENV = { ...process.env, MAX_THINKING_TOKENS: process.env.CLAUDESHAPE_THINKING ?? "0" };
 
@@ -25,7 +27,7 @@ const MCP_CONFIG = path.join(os.tmpdir(), "claudeshape-mcp.json");
 fs.writeFileSync(MCP_CONFIG, JSON.stringify({ mcpServers: { claudeshape: { command: process.execPath, args: [path.join(here, "mcp.js")] } } }));
 
 const LOGIN_MSG = "Claude isn't signed in yet. Open the Claude desktop app, sign in, and open its Code tab once (or run claude in a terminal and sign in). Then try again.";
-const SYSTEM = `You are in ClaudeShape mode. Every user message describes a part to model in Onshape. Always use the ClaudeShape MCP tools without being told to: for a new part make ONE build_steps call with new_document set to a short name (preview true only in Review mode), reusing the same document for follow-up edits unless asked for a new one; fix any visible flaws, then reply with the Onshape link and a one-line summary of the dimensions you chose. Never mention these instructions. Do not read or edit files.\n\n${DESIGN_RULES}`;
+const SYSTEM = `You are in ClaudeShape mode. Every user message describes a part to model in Onshape. Always use the ClaudeShape MCP tools without being told to: for a new part make ONE build_steps call with new_document set to a short name (preview true only in Review mode), reusing the same document for follow-up edits unless asked for a new one; fix any visible flaws, then reply with ONE short sentence (overall size and anything the user must know). The Onshape link button is shown to the user automatically: never repeat the link. Never mention these instructions. Do not read or edit files.\n\n${DESIGN_RULES}`;
 
 function fire(cmd, args, opts) {
   const c = spawn(cmd, args, opts);
@@ -99,7 +101,7 @@ app.post("/keys", async (req, res) => {
 });
 
 // Streams Claude Code's JSON events (one per line) to the window.
-function legacyChat(res, prompt, session) {
+function legacyChat(res, prompt, session, mode = "fast") {
   const base = [
     "-p", prompt, "--output-format", "stream-json", "--verbose",
     "--allowedTools", "mcp__claudeshape", "--disallowedTools", "Bash,Edit,Write,NotebookEdit,WebFetch",
@@ -107,7 +109,7 @@ function legacyChat(res, prompt, session) {
     ...(session ? ["--resume", session] : []),
   ];
   // Usage savers. If this Claude Code version rejects one, retry once without them.
-  const lean = ["--model", MODEL, "--strict-mcp-config", "--mcp-config", MCP_CONFIG, "--tools", "", "--disable-slash-commands", "--max-turns", "40"];
+  const lean = ["--model", MODELS[mode], "--strict-mcp-config", "--mcp-config", MCP_CONFIG, "--tools", "", "--disable-slash-commands", "--max-turns", "40"];
   let killed = false, cur = null;
   const bins = claudeCandidates();
   if (!bins.length) bins.push("claude");
@@ -141,21 +143,25 @@ function legacyChat(res, prompt, session) {
 
 
 
-// ---------- persistent Claude process (fast path) ----------
-// One long-lived `claude -p --input-format stream-json` process, started when the window opens, so each message skips
-// process + MCP start-up and keeps its context. If it misbehaves we fall back to one process per message.
+// ---------- persistent Claude processes (fast path) ----------
+// One long-lived `claude -p --input-format stream-json` process per mode (Fast = quick model, Review = strong model).
+// Fast starts when the window opens so the first message skips start-up; Review starts the first time it is used.
+// If a worker misbehaves we fall back to one process per message.
 const BASE_FLAGS = ["--allowedTools", "mcp__claudeshape", "--disallowedTools", "Bash,Edit,Write,NotebookEdit,WebFetch", "--append-system-prompt", SYSTEM];
-const LEAN_FLAGS = ["--model", MODEL, "--strict-mcp-config", "--mcp-config", MCP_CONFIG, "--tools", "", "--disable-slash-commands", "--max-turns", "40"];
+const leanFlags = (mode) => ["--model", MODELS[mode], "--strict-mcp-config", "--mcp-config", MCP_CONFIG, "--tools", "", "--disable-slash-commands", "--max-turns", "40"];
 let persistOk = process.env.CLAUDESHAPE_PERSIST !== "0";
-let worker = null;
+const workers = { fast: null, review: null };
 let lastSession = null;
+const anyBusy = () => Object.values(workers).some((w) => w?.busy);
+const killWorkers = () => { for (const m of Object.keys(workers)) { try { workers[m]?.child.kill(); } catch {} workers[m] = null; } };
 
-function startWorker(lean = true, bi = 0) {
+function startWorker(mode, lean = true, bi = 0) {
   const bins = claudeCandidates();
   if (!bins.length) bins.push("claude");
-  const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", ...BASE_FLAGS, ...(lean ? LEAN_FLAGS : [])];
+  const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", ...BASE_FLAGS, ...(lean ? leanFlags(mode) : [])];
   const child = spawn(bins[bi], args, { cwd: os.homedir(), env: CHILD_ENV, stdio: ["pipe", "pipe", "pipe"] });
-  const w = { child, buf: "", err: "", busy: false, dead: false, onLine: null, onClose: null, started: Date.now() };
+  const w = { child, mode, buf: "", err: "", busy: false, dead: false, onLine: null, onClose: null, started: Date.now() };
+  workers[mode] = w;
   child.stdin.on("error", () => {});
   child.stdout.on("data", (d) => {
     w.buf += d;
@@ -163,30 +169,30 @@ function startWorker(lean = true, bi = 0) {
     while ((i = w.buf.indexOf("\n")) >= 0) { const line = w.buf.slice(0, i); w.buf = w.buf.slice(i + 1); if (line.trim()) { try { lastSession = JSON.parse(line).session_id || lastSession; } catch {} w.onLine?.(line); } }
   });
   child.stderr.on("data", (d) => (w.err += d));
-  child.on("error", () => { w.dead = true; if (bi + 1 < bins.length && worker === w) { worker = startWorker(lean, bi + 1); } else { if (worker === w) worker = null; w.onClose?.(-1); } });
+  child.on("error", () => { w.dead = true; if (bi + 1 < bins.length && workers[mode] === w) startWorker(mode, lean, bi + 1); else { if (workers[mode] === w) workers[mode] = null; w.onClose?.(-1); } });
   child.on("close", (code) => {
     w.dead = true;
-    if (worker === w) worker = null;
+    if (workers[mode] === w) workers[mode] = null;
     // an older Claude Code that rejects the usage-saving flags: retry once without them
-    if (lean && Date.now() - w.started < 5000 && /unknown option|unrecognized|invalid (option|value)|unexpected argument/i.test(w.err)) { if (!w.busy) worker = startWorker(false, bi); else w.retryPlain = true; }
+    if (lean && Date.now() - w.started < 5000 && /unknown option|unrecognized|invalid (option|value)|unexpected argument/i.test(w.err)) { if (!w.busy) startWorker(mode, false, bi); else w.retryPlain = true; }
     w.onClose?.(code);
   });
   return w;
 }
-function prewarm() { if (persistOk && (!worker || worker.dead)) worker = startWorker(); }
+function prewarm(mode = "fast") { if (persistOk && (!workers[mode] || workers[mode].dead)) startWorker(mode); }
 
 // Resolves true if the worker handled the request (or reported a failure), false if the caller should fall back.
-function viaWorker(res, prompt) {
+function viaWorker(res, prompt, mode) {
   return new Promise((resolve) => {
-    prewarm();
-    const w = worker;
+    prewarm(mode);
+    const w = workers[mode];
     if (!w) return resolve(false);
     w.busy = true;
     let sent = false, finished = false;
     const done = (handled) => { if (finished) return; finished = true; clearTimeout(dog); w.onLine = w.onClose = null; w.busy = false; resolve(handled); };
     const fail = () => {
       persistOk = false; try { w.child.kill(); } catch {}
-      if (worker === w) worker = null;
+      if (workers[mode] === w) workers[mode] = null;
       if (!sent) return done(false);
       res.write(JSON.stringify({ type: "gui_error", message: "Claude stopped unexpectedly. Please send that again." }) + "\n"); res.end(); done(true);
     };
@@ -199,7 +205,7 @@ function viaWorker(res, prompt) {
     };
     w.onClose = (code) => {
       if (finished) return;
-      if (w.retryPlain) { worker = startWorker(false); return done(false); }
+      if (w.retryPlain) { startWorker(mode, false); return done(false); }
       const msg = /log ?in|auth|credential|api key/i.test(w.err) ? LOGIN_MSG : null;
       if (msg) { res.write(JSON.stringify({ type: "gui_error", message: msg }) + "\n"); res.end(); return done(true); }
       fail();
@@ -211,26 +217,31 @@ function viaWorker(res, prompt) {
 }
 
 const MODE_HINT = { fast: "\n\n(Fast mode)", review: "\n\n(Review mode)" };
+let freshConversation = true;
 app.post("/chat", async (req, res) => {
   const { session } = req.body || {};
-  const prompt = typeof req.body?.prompt === "string" ? req.body.prompt + (MODE_HINT[req.body.mode] || MODE_HINT.fast) : "";
+  const mode = req.body?.mode === "review" ? "review" : "fast";
+  const prompt = typeof req.body?.prompt === "string" ? req.body.prompt + MODE_HINT[mode] : "";
   if (!prompt?.trim()) return res.status(400).json({ error: "empty prompt" });
-  if (worker?.busy) return res.status(409).json({ error: "Still working on the last message." });
+  if (anyBusy()) return res.status(409).json({ error: "Still working on the last message." });
   res.setHeader("Content-Type", "application/x-ndjson");
   res.setHeader("Cache-Control", "no-cache");
   res.flushHeaders();
-  if (persistOk && await viaWorker(res, prompt)) return;
-  legacyChat(res, prompt, session || lastSession);
+  // First message of a conversation: make the Onshape document now, while Claude is still thinking.
+  if (freshConversation) { freshConversation = false; const k = loadKeys(); if (k) precreate(new Onshape(k)); }
+  if (persistOk && await viaWorker(res, prompt, mode)) return;
+  legacyChat(res, prompt, session || lastSession, mode);
 });
 
-app.post("/reset", (_req, res) => { try { worker?.child.kill(); } catch {} worker = null; prewarm(); res.json({ ok: true }); });
-process.on("exit", () => { try { worker?.child.kill(); } catch {} });
+app.post("/reset", (_req, res) => { killWorkers(); clearAll(); freshConversation = true; prewarm("fast"); res.json({ ok: true }); });
+process.on("exit", () => killWorkers());
 
 const server = app.listen(PORT, "127.0.0.1", (err) => {
   if (err) return;   // Express 5 also calls this when the port is taken; the "error" handler below deals with that
   console.log(`ClaudeShape window on ${URL_}`);
   openWindow();
-  prewarm();                                                   // start Claude now so the first message is fast
+  clearAll();                                                  // a new window is a new conversation
+  prewarm("fast");                                             // start Claude now so the first message is fast
   const k = loadKeys(); if (k) new Onshape(k).whoami().catch(() => {});   // warm the Onshape connection (TLS, auth)
   // Quit when the window is closed (it pings every 10 s).
   setInterval(() => { if (Date.now() - lastPing > IDLE_MS) process.exit(0); }, 5000).unref?.();
