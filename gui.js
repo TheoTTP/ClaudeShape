@@ -42,10 +42,8 @@ function claimWindow() {
   try { fs.writeFileSync(LOCK, String(Date.now())); } catch {}
   return true;
 }
-// ClaudeShape's own browser profile: a fresh Chrome/Edge process opens ONLY our window (no restored tabs, no
-// second "new tab" window) and never touches the user's normal browser.
-const PROFILE = path.join(os.homedir(), ".claudeshape-browser");
-const APP_FLAGS = [`--app=${URL_}`, "--window-size=520,780", `--user-data-dir=${PROFILE}`, "--no-first-run", "--no-default-browser-check"];
+// Opens in the user's normal Chrome/Edge profile, so links (e.g. "Open in Onshape") are signed in.
+const APP_FLAGS = [`--app=${URL_}`, "--window-size=520,780"];
 
 function openWindow() {
   if (!claimWindow()) return;
