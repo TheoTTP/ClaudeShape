@@ -32,6 +32,27 @@ Then just talk to Claude:
 Claude creates a new Onshape document itself, builds the part, and gives you the link.
 It uses your existing Claude subscription, so there is no separate API key and nothing to host.
 
+## Install on a Mac or PC (for friends)
+
+Each person needs a **Claude account** (Pro or Max, it uses their own plan) and a free **Onshape account**. Nothing is shared between people: keys stay on each person's computer.
+
+**Mac**: open Terminal and paste:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TheoTTP/ClaudeShape/claude/focused-turing-242l87/install.sh | bash
+```
+
+**Windows 10/11**: open PowerShell and paste:
+
+```powershell
+irm https://raw.githubusercontent.com/TheoTTP/ClaudeShape/claude/focused-turing-242l87/install.ps1 | iex
+```
+
+The installer sets up Git, Node.js and Claude Code if they're missing, downloads ClaudeShape, and creates an app
+(Mac: `~/Applications/ClaudeShape.app`; Windows: a Desktop and Start menu shortcut). Opening it shows a chat window.
+First run: paste an Onshape API key in the window, and sign in to Claude Code once (`claude` in a terminal).
+The app updates itself from GitHub each time it opens. These links only work while the repository is public.
+
 ## Desktop window (no terminal)
 
 `node gui.js` (or `npm run gui`) opens a small chat window: type a part, get an Onshape link. It runs
