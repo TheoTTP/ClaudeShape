@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node server.js",
     "smoke": "node scripts/smoke.mjs",
-    "test": "node scripts/test-builders.mjs && node scripts/smoke.mjs && node scripts/smoke-mcp.mjs && node scripts/smoke-gui.mjs && node scripts/test-update.mjs && node scripts/test-claude-bin.mjs && node scripts/test-batch.mjs && node scripts/test-window.mjs && node scripts/test-doc.mjs",
+    "test": "node scripts/test-builders.mjs && node scripts/smoke.mjs && node scripts/smoke-mcp.mjs && node scripts/smoke-gui.mjs && node scripts/test-update.mjs && node scripts/test-claude-bin.mjs && node scripts/test-batch.mjs && node scripts/test-window.mjs && node scripts/test-doc.mjs && node scripts/test-dims.mjs",
     "setup": "node scripts/setup.mjs",
     "mcp": "node mcp.js",
     "gui": "node gui.js"

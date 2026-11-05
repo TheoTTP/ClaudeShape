@@ -97,7 +97,7 @@ console.log("batch tests passed");
   calls.length = 0;
   const os2 = { addFeature: async (_c, f) => { calls.push(f); return { feature: { featureId: "S" + calls.length, constraints: f.constraints }, featureState: { featureStatus: "OK" } }; }, deleteFeature: async () => ({}), getBoundingBox: async () => ({ lowX: 0, lowY: 0, lowZ: 0, highX: 0.01, highY: 0.01, highZ: 0.01 }) };
   const b = await runTool(os2, {}, "build_steps", { preview: false, steps: [{ tool: "box", input: { width: 10, depth: 10, height: 5 } }, { tool: "create_sketch", input: { plane: "top", shapes: [{ type: "polygon", points: [[0, 0], [5, 0], [0, 5]] }] } }] });
-  assert.equal(b.sketches, "2 fully defined");
+  assert.equal(b.sketches, "2 fully defined");   // (no editable-dimension note unless Onshape's dimension format has been learned)
 }
 // heavy sketch: POST says OK but it fails to solve -> deleted and re-added plain; a normal sketch costs no extra read
 {

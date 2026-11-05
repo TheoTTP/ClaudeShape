@@ -11,6 +11,7 @@ import { loadKeys, saveKeys } from "./lib/config.js";
 import { claudeCandidates } from "./lib/claude-bin.js";
 import { DESIGN_RULES } from "./lib/agent.js";
 import { precreate, clearAll } from "./lib/doc.js";
+import { learn } from "./lib/learn.js";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -239,7 +240,7 @@ const server = app.listen(PORT, "127.0.0.1", (err) => {
   openWindow();
   clearAll();                                                  // a new window is a new conversation
   prewarm();                                             // start Claude now so the first message is fast
-  const k = loadKeys(); if (k) new Onshape(k).whoami().catch(() => {});   // warm the Onshape connection (TLS, auth)
+  const k = loadKeys(); if (k) { const o = new Onshape(k); o.whoami().catch(() => {}); setTimeout(() => learn(o).catch(() => {}), 4000); }   // warm the connection; learn Onshape's dimension format once, in the background
   // Quit when the window is closed (it pings every 10 s).
   setInterval(() => { if (Date.now() - lastPing > IDLE_MS) process.exit(0); }, 5000).unref?.();
 });
