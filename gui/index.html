@@ -28,13 +28,7 @@
 </style></head><body>
 <header><img src="/icons/icon-64.png" alt=""><b>ClaudeShape</b><button id="new">New part</button></header>
 <div id="log"><div class="hero" id="hero"><img src="/icons/icon-256.png" alt="">
-  <div>What do you want to make?</div>
-  <div class="chips">
-    <button>A 60×40×10 mm plate with four 5 mm corner holes</button>
-    <button>A 50 mm ball</button>
-    <button>A hex nut for an M8 bolt</button>
-    <button>A name plate that says HELLO, raised 1 mm</button>
-  </div></div></div>
+  <div>What do you want to make?</div></div></div>
 <form id="f"><textarea id="p" placeholder="Describe a part…" autofocus></textarea><button id="go">Build</button></form>
 <script>
 const log=document.getElementById("log"),p=document.getElementById("p"),go=document.getElementById("go");
@@ -68,6 +62,5 @@ async function send(text){
 }
 document.getElementById("f").onsubmit=e=>{e.preventDefault();const t=p.value.trim();if(!t||go.disabled)return;p.value="";send(t)};
 p.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();document.getElementById("f").requestSubmit()}});
-document.querySelectorAll(".chips button").forEach(b=>b.onclick=()=>{p.value=b.textContent;p.focus()});
 document.getElementById("new").onclick=()=>{session=null;log.innerHTML="";location.reload()};
 </script></body></html>
