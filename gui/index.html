@@ -67,7 +67,7 @@ document.getElementById("savekeys").onclick=async()=>{const m=document.getElemen
   const j=await r.json();if(j.ok){document.getElementById("sk").value="";checkKeys()}else m.textContent=j.error};
 checkKeys();
 setInterval(()=>fetch("/ping").catch(()=>{}),10000);fetch("/ping");
-const FRIENDLY={style_part:"Naming and colouring parts",shell:"Hollowing out",mirror:"Mirroring",sweep:"Sweeping along a path",loft:"Lofting",WebSearch:"Searching the web",WebFetch:"Reading a web page",build_steps:"Building the model",preview:"Checking how it looks",new_document:"Creating a document",create_sketch:"Drawing a sketch",extrude:"Extruding",revolve:"Revolving",fillet:"Rounding edges",chamfer:"Chamfering",offset_plane:"Adding a plane",linear_pattern:"Making a pattern",circular_pattern:"Making a pattern",find_faces:"Finding faces",get_bounding_box:"Checking size",delete_feature:"Undoing a step",list_features:"Reviewing the model",open_document:"Opening the document",list_documents:"Looking up documents"};
+const FRIENDLY={list_parts:"Checking the parts",style_part:"Naming and colouring parts",shell:"Hollowing out",mirror:"Mirroring",sweep:"Sweeping along a path",loft:"Lofting",WebSearch:"Searching the web",WebFetch:"Reading a web page",build_steps:"Building the model",preview:"Checking how it looks",new_document:"Creating a document",create_sketch:"Drawing a sketch",extrude:"Extruding",revolve:"Revolving",fillet:"Rounding edges",chamfer:"Chamfering",offset_plane:"Adding a plane",linear_pattern:"Making a pattern",circular_pattern:"Making a pattern",find_faces:"Finding faces",get_bounding_box:"Checking size",delete_feature:"Undoing a step",list_features:"Reviewing the model",open_document:"Opening the document",list_documents:"Looking up documents"};
 function bubble(cls,text){document.getElementById("hero")?.remove();const d=document.createElement("div");d.className="b "+cls;d.textContent=text;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
 function step(t){document.getElementById("hero")?.remove();const d=document.createElement("div");d.className="step";d.textContent=t;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
 // Small, safe markdown renderer (no innerHTML): headings, **bold**, *italic*, `code`, lists, links, paragraphs.
@@ -105,7 +105,7 @@ async function send(text){
   // timer line at the top of the response: ticks while working, then reads "Done in …"
   const t0=performance.now(),timer=step("Working… 0s");timer.className="timing";
   const tick=setInterval(()=>{timer.textContent="Working… "+fmtTime(performance.now()-t0)},1000);
-  let failed=false,sketchNote="",gotResult=false,turnIds=new Set(),slowest="",detail="",openBtn=null,onshapeMs=0;
+  let failed=false,problems=0,sketchNote="",gotResult=false,turnIds=new Set(),slowest="",detail="",openBtn=null,onshapeMs=0;
   const think=step("Thinking");think.className="step dots";
   try{
     const r=await fetch("/chat",{method:"POST",headers:H,body:JSON.stringify({prompt:text,session})});
@@ -118,9 +118,13 @@ async function send(text){
         {const m=line.match(/sketches\\?"\s*:\s*\\?"([^"\\]+)/);if(m)sketchNote=m[1]}
         {const m=line.match(/slowest\\?"\s*:\s*\\?"([^"\\]+)/);if(m)slowest=m[1]}
         for(const m of line.matchAll(/onshape_ms\\?"\s*:\s*(\d+)/g))onshapeMs+=+m[1];
+        if(e.type==="user"&&problems<4){for(const c of e.message?.content||[]){if(c.type!=="tool_result")continue;
+          const raw=(Array.isArray(c.content)?c.content.map(x=>x.text||"").join(" "):String(c.content||""));let msg="";
+          try{const j=JSON.parse(raw);msg=j.error||(j.warning?j.warning+(j.reason?": "+j.reason:""):"")||(j.problems&&j.problems[0]&&(j.problems[0].feature+": "+j.problems[0].error))||((j.built||[]).find(b=>b.warning)||{}).warning||""}catch{if(c.is_error)msg=raw}
+          if(msg&&problems<4){problems++;const n=step("Problem: "+String(msg).replace(/\s+/g," ").slice(0,170));n.className="step note warn"}}}
         if(e.type==="assistant")turnIds.add(e.message?.id||("e"+turnIds.size));
         if(e.type==="assistant"){for(const c of e.message?.content||[]){
-          if(c.type==="tool_use"){think.remove();const n=c.name.replace(/^mcp__claudeshape__/,"");step("• "+(FRIENDLY[n]||n)+"…")}
+          if(c.type==="tool_use"){think.remove();ai=null;const n=c.name.replace(/^mcp__claudeshape__/,"");step("• "+(FRIENDLY[n]||n)+"…")}
           if(c.type==="text"&&c.text.trim()){think.remove();ai=ai||bubble("ai","");ai.dataset.t=(ai.dataset.t?ai.dataset.t+"\n\n":"")+c.text.trim();render(ai,ai.dataset.t,!!openBtn)}}}
         if(e.type==="result"){final=e.result;gotResult=true;if(e.is_error){failed=true;bubble("ai err",e.result||"Something went wrong.")}}
         if(e.type==="gui_error"){failed=true;bubble("ai err",e.message)}

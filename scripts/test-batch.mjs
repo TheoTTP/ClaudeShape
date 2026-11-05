@@ -333,9 +333,9 @@ console.log("feature tests passed");
   assert.deepEqual(r, { parts: 2, ok: true });
   assert.equal(meta.J1.Name, "Roller 1"); assert.equal(meta.J2.Name, "Roller 2");                        // several parts from one feature get numbered
   assert.deepEqual(meta.J1.Appearance.color, { red: 249, green: 115, blue: 22 }); assert.equal(meta.J1.Appearance.isGenerated, true);   // existing fields kept
-  assert.equal(posted[0].props.find((p) => p.propertyId === "pA").value.opacity, 255);
+  assert.equal(posted.flatMap((x) => x.props).find((p) => p.propertyId === "pA").value.opacity, 255);
   assert.equal(meta.J3, undefined);                                                                       // only parts from that feature are touched
-  assert.match((await runTool(os, {}, "style_part", { feature_id: "NOPE", color: "red" }).catch((e) => ({ error: e.message }))).error, /created no parts/);
+  assert.match((await runTool(os, {}, "style_part", { feature_id: "NOPE", color: "red" }).catch((e) => ({ error: e.message }))).error, /(created no parts|list_parts)/);
   assert.match((await runTool(os, {}, "style_part", { feature_id: "FX", color: "mauve?" }).catch((e) => ({ error: e.message }))).error, /Unknown colour/);
   assert.match((await runTool(os, {}, "style_part", { feature_id: "FX" }).catch((e) => ({ error: e.message }))).error, /name and\/or a colour/);
 
@@ -352,5 +352,39 @@ console.log("feature tests passed");
   const os3 = { ...os2, getParts: async () => { throw new Error("parts unavailable"); } };
   const c = await runTool(os3, {}, "build_steps", { preview: false, steps: [{ tool: "box", as: "plate", input: { width: 10, depth: 10, height: 3 } }, { tool: "style_part", input: { feature_id: "$plate", color: "red" } }, { tool: "box", input: { width: 5, depth: 5, height: 2, x: 20 } }] });
   assert.equal(c.error, undefined); assert.equal(c.built.length, 3); assert.match(c.built[1].warning, /could not style/);
+}
+// tracked parts: styling does not need a FeatureScript lookup, and a colour Onshape will not take is reported with its reason
+{
+  const meta = { P1: { Name: "Part 1", Appearance: { color: { red: 1, green: 2, blue: 3 }, opacity: 255 } }, P2: { Name: "Part 2", Appearance: { color: { red: 9, green: 9, blue: 9 }, opacity: 255 } } };
+  let parts = [], n = 0, accept = (v) => true;
+  const os = {
+    getParts: async () => parts.map((partId) => ({ partId, name: meta[partId].Name, appearance: meta[partId].Appearance })),
+    evalFeatureScript: async () => { throw new Error("featurescript endpoint unavailable"); },
+    getPartMetadata: async (_c, pid) => ({ properties: [{ name: "Name", propertyId: "pN", value: meta[pid].Name }, { name: "Appearance", propertyId: "pA", value: meta[pid].Appearance }] }),
+    updatePartMetadata: async (_c, pid, props) => { for (const p of props) { if (p.propertyId === "pN") meta[pid].Name = p.value; if (p.propertyId === "pA") { if (!accept(p.value)) throw new Error("Onshape POST -> 400: bad value"); meta[pid].Appearance = p.value; } } return {}; },
+    addFeature: async (_c, f) => { n++; if (f.featureType === "extrude") parts = [...parts, "P" + (parts.length + 1)]; return { feature: { featureId: "F" + n }, featureState: { featureStatus: "OK" } }; },
+    deleteFeature: async () => ({}), getBoundingBox: async () => ({ lowX: 0, lowY: 0, lowZ: 0, highX: 0.01, highY: 0.01, highZ: 0.01 }),
+  };
+  const r = await runTool(os, { eid: "E9" }, "build_steps", { preview: false, steps: [
+    { tool: "box", as: "a", input: { width: 10, depth: 10, height: 3 } }, { tool: "box", as: "b", input: { width: 5, depth: 5, height: 2, x: 20 } },
+    { tool: "style_part", input: { feature_id: "$a", name: "Grip", color: "#1a1a1a" } }, { tool: "style_part", input: { feature_id: "$b", color: "red" } }] });
+  assert.equal(r.error, undefined);
+  assert.equal(meta.P1.Name, "Grip"); assert.deepEqual(meta.P1.Appearance.color, { red: 26, green: 26, blue: 26 });     // the right part got each style
+  assert.deepEqual(meta.P2.Appearance.color, { red: 220, green: 38, blue: 38 });
+  // list_parts is the escape hatch
+  const lp = await runTool(os, { eid: "E9" }, "list_parts", {});
+  assert.deepEqual(lp.map((x) => x.part_id), ["P1", "P2"]);
+  const viaId = await runTool(os, { eid: "E9" }, "style_part", { part_id: "P2", color: "gold" });
+  assert.deepEqual(viaId, { parts: 1, ok: true }); assert.deepEqual(meta.P2.Appearance.color, { red: 212, green: 175, blue: 55 });
+  // Onshape only takes the 0-1 shape -> the third variant is tried and confirmed
+  accept = (v) => v.color.red <= 1;
+  const alt = await runTool(os, { eid: "E9" }, "style_part", { part_id: "P1", color: "white" });
+  assert.equal(alt.ok, true); assert.ok(meta.P1.Appearance.color.red <= 1);
+  // Onshape refuses every shape -> a warning that carries Onshape's own reason
+  accept = () => false;
+  const no = await runTool(os, { eid: "E9" }, "style_part", { part_id: "P1", color: "blue" });
+  assert.match(no.warning, /colour/); assert.match(no.reason, /400: bad value/);
+  // unknown feature and no lookup possible -> a clear instruction, not a vague failure
+  assert.match((await runTool(os, { eid: "E9" }, "style_part", { feature_id: "NOPE", color: "red" }).catch((e) => ({ error: e.message }))).error, /list_parts/);
 }
 console.log("part styling tests passed");

@@ -14,6 +14,17 @@ import { setLearned } from "./lib/onshape.js";
 import { BASE, urlOf, createDocumentWithStudio, takePending, saveCtx, loadCtx, clearCtx } from "./lib/doc.js";
 
 const LOG = path.join(os_.homedir(), ".claudeshape-timing.log");
+// Anything that went wrong inside a tool is also written to the log, so it can be read later.
+function noteProblems(tool, out) {
+  try {
+    const probs = [];
+    if (out?.error) probs.push(`error=${out.error}`);
+    if (out?.warning) probs.push(`warning=${out.warning} ${out.reason || ""}`);
+    for (const b of out?.built || []) { if (b.warning) probs.push(`${b.step}: ${b.warning}`); if (b.defined) probs.push(`${b.step}: sketch ${b.defined}`); }
+    for (const p of out?.problems || []) probs.push(`${p.feature}: ${p.error}`);
+    if (probs.length) fs.appendFileSync(LOG, `${new Date().toISOString()} ${tool} PROBLEM ${probs.join(" | ").slice(0, 900)}\n`);
+  } catch {}
+}
 function logTiming(tool, total, calls) {
   try {
     if (fs.existsSync(LOG) && fs.statSync(LOG).size > 200_000) fs.writeFileSync(LOG, "");
@@ -115,6 +126,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       const { _image, ...rest } = out;
       return { content: [{ type: "text", text: JSON.stringify({ ...(url ? { url } : {}), ...rest, ...ms() }) }, { type: "image", data: _image.data, mimeType: _image.mimeType }] };
     }
+    noteProblems(name, out);
     return reply(url ? { url, ...out } : out);
   } catch (e) {
     return reply(`Error: ${e.message}`, true);
