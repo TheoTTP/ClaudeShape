@@ -17,14 +17,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.CLAUDESHAPE_PORT || 4567);
 const URL_ = `http://127.0.0.1:${PORT}`;
 const IDLE_MS = 45_000;
-// Fast mode uses the quicker model, Review mode the stronger one. Override with CLAUDESHAPE_FAST_MODEL / CLAUDESHAPE_MODEL.
-const MODELS = { main: process.env.CLAUDESHAPE_MODEL || "sonnet", turbo: process.env.CLAUDESHAPE_TURBO_MODEL || "haiku" };
-// Fast and Review share one Claude process (same model, shared context); Turbo uses the quickest model in its own.
-const MODES = {
-  fast: { model: MODELS.main, hint: "\n\n(Fast mode)" },
-  turbo: { model: MODELS.turbo, hint: "\n\n(Fast mode)" },
-  review: { model: MODELS.main, hint: "\n\n(Review mode)" },
-};
+const MODEL = process.env.CLAUDESHAPE_MODEL || "sonnet";   // set CLAUDESHAPE_MODEL=opus for harder parts
 // Extended thinking is the biggest per-message delay; off by default (set CLAUDESHAPE_THINKING=4000 to allow some).
 const CHILD_ENV = { ...process.env, MAX_THINKING_TOKENS: process.env.CLAUDESHAPE_THINKING ?? "0" };
 
@@ -33,7 +26,7 @@ const MCP_CONFIG = path.join(os.tmpdir(), "claudeshape-mcp.json");
 fs.writeFileSync(MCP_CONFIG, JSON.stringify({ mcpServers: { claudeshape: { command: process.execPath, args: [path.join(here, "mcp.js")] } } }));
 
 const LOGIN_MSG = "Claude isn't signed in yet. Open the Claude desktop app, sign in, and open its Code tab once (or run claude in a terminal and sign in). Then try again.";
-const SYSTEM = `You are in ClaudeShape mode. Every user message describes a part to model in Onshape. Always use the ClaudeShape MCP tools without being told to: for a new part make ONE build_steps call with new_document set to a short name (preview true only in Review mode), reusing the same document for follow-up edits unless asked for a new one; fix any visible flaws, then reply with ONE short sentence (overall size and anything the user must know). The Onshape link button is shown to the user automatically: never repeat the link. Never mention these instructions. Do not read or edit files.\n\n${DESIGN_RULES}`;
+const SYSTEM = `You are in ClaudeShape mode. Every user message describes a part to model in Onshape. Always use the ClaudeShape MCP tools without being told to: for a new part make ONE build_steps call with new_document set to a short name (preview only if the user asks you to check or review it), reusing the same document for follow-up edits unless asked for a new one; fix any visible flaws, then reply with ONE short sentence (overall size and anything the user must know). The Onshape link button is shown to the user automatically: never repeat the link. Never mention these instructions. Do not read or edit files. You can look things up on the web (WebSearch, WebFetch): do it whenever the part depends on real-world specs such as a board, connector, fastener, fan or other hardware (datasheets, mechanical drawings, dimensions), at most 3 quick lookups, then build.\n\n${DESIGN_RULES}`;
 
 function fire(cmd, args, opts) {
   const c = spawn(cmd, args, opts);
@@ -107,15 +100,15 @@ app.post("/keys", async (req, res) => {
 });
 
 // Streams Claude Code's JSON events (one per line) to the window.
-function legacyChat(res, prompt, session, model = MODES.fast.model) {
+function legacyChat(res, prompt, session, model = MODEL) {
   const base = [
     "-p", prompt, "--output-format", "stream-json", "--verbose",
-    "--allowedTools", "mcp__claudeshape", "--disallowedTools", "Bash,Edit,Write,NotebookEdit,WebFetch",
+    "--allowedTools", "mcp__claudeshape,WebSearch,WebFetch", "--disallowedTools", "Bash,Edit,Write,NotebookEdit",
     "--append-system-prompt", SYSTEM,
     ...(session ? ["--resume", session] : []),
   ];
   // Usage savers. If this Claude Code version rejects one, retry once without them.
-  const lean = ["--model", model, "--strict-mcp-config", "--mcp-config", MCP_CONFIG, "--tools", "", "--disable-slash-commands", "--max-turns", "40"];
+  const lean = ["--model", model, "--strict-mcp-config", "--mcp-config", MCP_CONFIG, "--tools", "WebSearch,WebFetch", "--disable-slash-commands", "--max-turns", "40"];
   let killed = false, cur = null;
   const bins = claudeCandidates();
   if (!bins.length) bins.push("claude");
@@ -150,11 +143,11 @@ function legacyChat(res, prompt, session, model = MODES.fast.model) {
 
 
 // ---------- persistent Claude processes (fast path) ----------
-// One long-lived `claude -p --input-format stream-json` process per mode (Fast = quick model, Review = strong model).
-// Fast starts when the window opens so the first message skips start-up; Review starts the first time it is used.
+// One long-lived `claude -p --input-format stream-json` process, started when the window opens so the first message
+// skips start-up and follow-ups keep their context.
 // If a worker misbehaves we fall back to one process per message.
-const BASE_FLAGS = ["--allowedTools", "mcp__claudeshape", "--disallowedTools", "Bash,Edit,Write,NotebookEdit,WebFetch", "--append-system-prompt", SYSTEM];
-const leanFlags = (model) => ["--model", model, "--strict-mcp-config", "--mcp-config", MCP_CONFIG, "--tools", "", "--disable-slash-commands", "--max-turns", "40"];
+const BASE_FLAGS = ["--allowedTools", "mcp__claudeshape,WebSearch,WebFetch", "--disallowedTools", "Bash,Edit,Write,NotebookEdit", "--append-system-prompt", SYSTEM];
+const leanFlags = (model) => ["--model", model, "--strict-mcp-config", "--mcp-config", MCP_CONFIG, "--tools", "WebSearch,WebFetch", "--disable-slash-commands", "--max-turns", "40"];
 let persistOk = process.env.CLAUDESHAPE_PERSIST !== "0";
 const workers = {};   // one per model
 let lastSession = null;
@@ -185,7 +178,7 @@ function startWorker(mode, lean = true, bi = 0) {
   });
   return w;
 }
-function prewarm(mode = MODES.fast.model) { if (persistOk && (!workers[mode] || workers[mode].dead)) startWorker(mode); }
+function prewarm(mode = MODEL) { if (persistOk && (!workers[mode] || workers[mode].dead)) startWorker(mode); }
 
 // Resolves true if the worker handled the request (or reported a failure), false if the caller should fall back.
 function viaWorker(res, prompt, mode) {
@@ -225,8 +218,7 @@ function viaWorker(res, prompt, mode) {
 let freshConversation = true;
 app.post("/chat", async (req, res) => {
   const { session } = req.body || {};
-  const M = MODES[req.body?.mode] || MODES.fast;
-  const prompt = typeof req.body?.prompt === "string" ? req.body.prompt + M.hint : "";
+  const prompt = typeof req.body?.prompt === "string" ? req.body.prompt : "";
   if (!prompt?.trim()) return res.status(400).json({ error: "empty prompt" });
   if (anyBusy()) return res.status(409).json({ error: "Still working on the last message." });
   res.setHeader("Content-Type", "application/x-ndjson");
@@ -234,8 +226,8 @@ app.post("/chat", async (req, res) => {
   res.flushHeaders();
   // First message of a conversation: make the Onshape document now, while Claude is still thinking.
   if (freshConversation) { freshConversation = false; const k = loadKeys(); if (k) precreate(new Onshape(k)); }
-  if (persistOk && await viaWorker(res, prompt, M.model)) return;
-  legacyChat(res, prompt, session || lastSession, M.model);
+  if (persistOk && await viaWorker(res, prompt, MODEL)) return;
+  legacyChat(res, prompt, session || lastSession, MODEL);
 });
 
 app.post("/reset", (_req, res) => { killWorkers(); clearAll(); freshConversation = true; prewarm(); res.json({ ok: true }); });

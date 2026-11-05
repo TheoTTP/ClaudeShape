@@ -11,7 +11,7 @@ const fake = path.join(dir, "claude");
 fs.writeFileSync(fake, `#!/usr/bin/env node
 const a = process.argv.slice(2);
 const out = (o) => console.log(JSON.stringify(o));
-const flags = { lean: a.includes("--strict-mcp-config") && a.includes("--model"), model: a[a.indexOf("--model") + 1] };
+const flags = { web: a.join(" ").includes("WebSearch,WebFetch") && a[a.indexOf("--disallowedTools") + 1] === "Bash,Edit,Write,NotebookEdit", lean: a.includes("--strict-mcp-config") && a.includes("--model"), model: a[a.indexOf("--model") + 1] };
 if (process.env.FAKE_OLD && a.includes("--tools")) { console.error("error: unknown option '--tools'"); process.exit(1); }
 const reply = (extra) => {
   out({ type: "assistant", session_id: "sess1", message: { content: [{ type: "tool_use", name: "mcp__claudeshape__new_document", input: {} }] } });
@@ -46,8 +46,8 @@ const last = (ev) => ev.at(-1);
   const s = await server();
   assert.match(await (await fetch(`http://127.0.0.1:${s.p}/`)).text(), /ClaudeShape/);
   const a = last(await s.chat("a ball")), b = last(await s.chat("make it bigger"));
-  assert.equal(a.mode, "persistent"); assert.equal(a.lean, true); assert.equal(a.got, "a ball\n\n(Fast mode)");
-  assert.equal(last(await s.post("/chat", { prompt: "x", mode: "review" })).got, "x\n\n(Review mode)");
+  assert.equal(a.mode, "persistent"); assert.equal(a.lean, true); assert.equal(a.web, true);   // web lookups on, file/shell tools off
+  assert.equal(a.got, "a ball");
   assert.equal(a.turn, 1); assert.equal(b.turn, 2); assert.equal(b.pid, a.pid);
   // reset starts a fresh process
   await s.post("/reset", {}); await new Promise((r) => setTimeout(r, 500));
@@ -71,15 +71,6 @@ const last = (ev) => ev.at(-1);
 {
   const s = await server({ FAKE_OLD: "1", CLAUDESHAPE_PERSIST: "0" });
   const a = await s.chat("x"); assert.equal(last(a).type, "result"); assert.equal(last(a).lean, false);
-  s.srv.kill();
-}
-// 4b. modes: Fast and Review share one process (same model, shared context); Turbo is its own, with the quickest model
-{
-  const s = await server();
-  const f = last(await s.post("/chat", { prompt: "x", mode: "fast" })), r = last(await s.post("/chat", { prompt: "y", mode: "review" })), t = last(await s.post("/chat", { prompt: "z", mode: "turbo" }));
-  assert.equal(f.model, "sonnet"); assert.equal(r.model, "sonnet"); assert.equal(t.model, "haiku");
-  assert.equal(f.pid, r.pid); assert.notEqual(f.pid, t.pid);
-  assert.equal(r.got, "y\n\n(Review mode)"); assert.equal(t.got, "z\n\n(Fast mode)");
   s.srv.kill();
 }
 // 4c. the Onshape document is created as soon as the first message arrives (not for follow-ups)
