@@ -90,7 +90,7 @@ function render(el,text){
     inline(para,line.trim())}
   const links=text.match(ONSHAPE);
   if(links){const a=document.createElement("a");a.className="open";a.href=links[links.length-1];a.target="_blank";a.rel="noopener";a.textContent="Open in Onshape ↗";el.append(a)}}
-const fmtTime=ms=>{const t=ms/1000;if(t<10)return t.toFixed(1)+"s";const m=Math.floor(t/60),sec=Math.round(t%60);return m?`${m}m ${sec}s`:Math.round(t)+"s"};
+const fmtTime=ms=>{const t=Math.max(1,Math.round(ms/1000)),m=Math.floor(t/60);return m?`${m}m ${t%60}s`:t+"s"};   // whole seconds: 1s, 2s … 1m 5s
 async function send(text){
   go.disabled=true;bubble("me",text);
   // timer line at the top of the response: ticks while working, then reads "Done in …"
