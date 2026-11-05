@@ -12,7 +12,7 @@ import { claudeCandidates } from "./lib/claude-bin.js";
 import { DESIGN_RULES } from "./lib/agent.js";
 import { precreate, clearAll } from "./lib/doc.js";
 import { learn, learnLoft } from "./lib/learn.js";
-import { calibrateRevolve, applyRevolveCal, calibrateRegionPoint, applyRegionCal } from "./lib/calib.js";
+import { calibrateRegionPoint, applyRegionCal } from "./lib/calib.js";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -112,12 +112,15 @@ function legacyChat(res, prompt, session, model = MODEL) {
   // Usage savers. If this Claude Code version rejects one, retry once without them.
   const lean = ["--model", model, "--strict-mcp-config", "--mcp-config", MCP_CONFIG, "--tools", "WebSearch,WebFetch", "--disable-slash-commands", "--max-turns", "40"];
   let killed = false, cur = null;
+  legacyBusy = true;
+  const finish = () => { legacyBusy = false; if (!res.writableEnded) res.end(); };
   const bins = claudeCandidates();
   if (!bins.length) bins.push("claude");
   const run = (args, canRetry, bi = 0) => {
     const child = spawn(bins[bi], args, { cwd: os.homedir(), env: CHILD_ENV, stdio: ["ignore", "pipe", "pipe"] });
     cur = child;
-    let buf = "", err = "", sent = false;
+    child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
+    let buf = "", err = "", sent = false, spawnFailed = false;
     child.stdout.on("data", (d) => {
       buf += d;
       let i;
@@ -125,21 +128,23 @@ function legacyChat(res, prompt, session, model = MODEL) {
     });
     child.stderr.on("data", (d) => (err += d));
     child.on("error", (e) => {
-      if (bi + 1 < bins.length) return run(args, canRetry, bi + 1);   // that copy won't start: try the next one
-      res.write(JSON.stringify({ type: "gui_error", message: e.code === "ENOENT" ? "Could not find Claude. Install the Claude desktop app from claude.com/download, sign in, and open its Code tab once." : e.message }) + "\n"); res.end(); });
-    child.on("close", (code) => {
+      spawnFailed = true;
       if (killed) return;
+      if (bi + 1 < bins.length) return run(args, canRetry, bi + 1);   // that copy won't start: try the next one
+      res.write(JSON.stringify({ type: "gui_error", message: e.code === "ENOENT" ? "Could not find Claude. Install the Claude desktop app from claude.com/download, sign in, and open its Code tab once." : e.message }) + "\n"); finish(); });
+    child.on("close", (code) => {
+      if (killed || spawnFailed) return;
       if (code && !sent && canRetry && /unknown option|unrecognized|invalid (option|value)|unexpected argument/i.test(err)) return run(base, false, bi);
       if (code) {
         const last = err.trim().split("\n").pop() || `Claude exited with code ${code}`;
         const msg = /log ?in|auth|credential|api key/i.test(err) ? LOGIN_MSG : last;
         res.write(JSON.stringify({ type: "gui_error", message: msg }) + "\n");
       }
-      res.end();
+      finish();
     });
   };
   run([...base, ...lean], true);
-  res.on("close", () => { killed = true; cur?.kill(); });
+  res.on("close", () => { killed = true; legacyBusy = false; cur?.kill(); });
 }
 
 
@@ -151,9 +156,10 @@ function legacyChat(res, prompt, session, model = MODEL) {
 const BASE_FLAGS = ["--allowedTools", "mcp__claudeshape,WebSearch,WebFetch", "--disallowedTools", "Bash,Edit,Write,NotebookEdit", "--append-system-prompt", SYSTEM];
 const leanFlags = (model) => ["--model", model, "--strict-mcp-config", "--mcp-config", MCP_CONFIG, "--tools", "WebSearch,WebFetch", "--disable-slash-commands", "--max-turns", "40"];
 let persistOk = process.env.CLAUDESHAPE_PERSIST !== "0";
+let legacyBusy = false;
 const workers = {};   // one per model
 let lastSession = null;
-const anyBusy = () => Object.values(workers).some((w) => w?.busy);
+const anyBusy = () => legacyBusy || Object.values(workers).some((w) => w?.busy);
 const killWorkers = () => { for (const m of Object.keys(workers)) { try { workers[m]?.child.kill(); } catch {} workers[m] = null; } };
 
 function startWorker(mode, lean = true, bi = 0) {
@@ -164,6 +170,7 @@ function startWorker(mode, lean = true, bi = 0) {
   const w = { child, mode, buf: "", err: "", busy: false, dead: false, onLine: null, onClose: null, started: Date.now() };
   workers[mode] = w;
   child.stdin.on("error", () => {});
+  child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
   child.stdout.on("data", (d) => {
     w.buf += d;
     let i;
@@ -189,9 +196,10 @@ function viaWorker(res, prompt, mode, images = []) {
     const w = workers[mode];
     if (!w) return resolve(false);
     w.busy = true;
-    let sent = false, finished = false;
+    let sent = false, finished = false, aborted = false;
     const done = (handled) => { if (finished) return; finished = true; clearTimeout(dog); w.onLine = w.onClose = null; w.busy = false; resolve(handled); };
     const fail = () => {
+      if (aborted) { try { w.child.kill(); } catch {} if (workers[mode] === w) workers[mode] = null; return done(true); }   // the user closed the window: not a Claude failure
       persistOk = false; try { w.child.kill(); } catch {}
       if (workers[mode] === w) workers[mode] = null;
       if (!sent) return done(false);
@@ -211,7 +219,7 @@ function viaWorker(res, prompt, mode, images = []) {
       if (msg) { res.write(JSON.stringify({ type: "gui_error", message: msg }) + "\n"); res.end(); return done(true); }
       fail();
     };
-    res.on("close", () => { if (!finished) { try { w.child.kill(); } catch {} } });   // user closed the window mid-answer
+    res.on("close", () => { if (!finished) { aborted = true; try { w.child.kill(); } catch {} done(true); } });   // user closed the window mid-answer
     const content = images.length
       ? [...images.map((im) => ({ type: "image", source: { type: "base64", media_type: im.media_type, data: im.data } })), { type: "text", text: prompt }]
       : prompt;
@@ -240,7 +248,7 @@ app.post("/chat", async (req, res) => {
   legacyChat(res, prompt, session || lastSession, MODEL);
 });
 
-app.post("/reset", (_req, res) => { killWorkers(); clearAll(); freshConversation = true; prewarm(); res.json({ ok: true }); });
+app.post("/reset", (_req, res) => { killWorkers(); lastSession = null; clearAll(); freshConversation = true; prewarm(); res.json({ ok: true }); });
 process.on("exit", () => killWorkers());
 
 // One-off checks of how this Onshape behaves, run quietly in the background and shown in the window.
@@ -269,7 +277,7 @@ const server = app.listen(PORT, "127.0.0.1", (err) => {
   prewarm();                                             // start Claude now so the first message is fast
   const k = loadKeys(); if (k) { const o = new Onshape(k); o.whoami().catch(() => {}); setTimeout(() => selfTestAll(o), 6000); }   // warm the connection; learn Onshape's dimension format once, in the background
   // Quit when the window is closed (it pings every 10 s).
-  setInterval(() => { if (Date.now() - lastPing > IDLE_MS) process.exit(0); }, 5000).unref?.();
+  setInterval(() => { if (!anyBusy() && Date.now() - lastPing > IDLE_MS) process.exit(0); }, 5000).unref?.();
 });
 server.on("error", (e) => {
   if (e.code !== "EADDRINUSE") throw e;

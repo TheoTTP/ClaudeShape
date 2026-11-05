@@ -37,7 +37,7 @@ let ctx = loadCtx(); // current {did, wid, eid}; shared with the other Claude wo
 const setCtx = (c) => { ctx = c; if (c) saveCtx(c); else clearCtx(); };
 
 // Onshape's wording when a document was deleted / trashed / can no longer be opened
-const GONE = /trash|failed to load|document[^.]{0,40}(deleted|not found)|no longer (exist|available)/i;
+const GONE = /\btrash(ed)?\b|failed to load (the )?document|document[^.]{0,40}(deleted|not found)|no longer (exist|available)/i;
 const gone = (msg) => GONE.test(String(msg));
 
 const parseUrl = (u) => {
@@ -125,7 +125,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         return reply("The current document was deleted or is in the trash. Call build_steps with new_document to start a new one and rebuild the part there.", true);
       }
     }
-    if (out?.error && !out.built) return reply(out.error, true);
+    if (out?.error && !out.built) return reply(url ? `${out.error} (new document: ${url})` : out.error, true);
     if (out && out._image) {
       const { _image, ...rest } = out;
       return { content: [{ type: "text", text: JSON.stringify({ ...(url ? { url } : {}), ...rest, ...ms() }) }, { type: "image", data: _image.data, mimeType: _image.mimeType }] };

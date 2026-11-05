@@ -58,7 +58,7 @@ prompt_.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKe
 form.onsubmit = async (e) => {
   e.preventDefault();
   const text = prompt_.value.trim();
-  if (!text) return;
+  if (!text || go.disabled) return;
   prompt_.value = "";
   go.disabled = true;
   add("me", text);

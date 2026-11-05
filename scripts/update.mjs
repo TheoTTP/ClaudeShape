@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 // Self-update from GitHub. Runs on every launch; never blocks launching (offline is fine).
 //  - follows the channel named in UPDATE_CHANNEL on the branch you're on (so everyone can be moved to e.g. `main`)
 //  - friends' installs (marked by .git/claudeshape-managed) are hard-reset if history diverges; dev copies never are
@@ -20,14 +21,16 @@ export function update(root = defaultRoot) {
   const want = git("show", `FETCH_HEAD:UPDATE_CHANNEL`);
   if (ok(want) && /^[\w./-]+$/.test(out(want))) channel = out(want);
 
+  const managed = fs.existsSync(path.join(root, ".git", "claudeshape-managed"));
   if (channel !== cur) {
     if (!ok(git("fetch", "-q", "origin", channel))) return "offline";
-    git("stash", "-q");
+    if (managed) git("stash", "-q");
+    else if (out(git("status", "--porcelain"))) return "local changes (left alone)";
     return ok(git("checkout", "-q", "-B", channel, "FETCH_HEAD")) ? `moved to ${channel}` : "channel-switch-failed";
   }
-  git("stash", "-q");
+  if (managed) git("stash", "-q");
+  else if (out(git("status", "--porcelain"))) return "local changes (left alone)";
   if (ok(git("merge", "-q", "--ff-only", "FETCH_HEAD"))) return "up to date";
-  const managed = fs.existsSync(path.join(root, ".git", "claudeshape-managed"));
   if (managed && ok(git("reset", "-q", "--hard", "FETCH_HEAD"))) return "reset to latest";
   return "diverged (left alone)";
 }
@@ -35,7 +38,7 @@ export function update(root = defaultRoot) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const r = update();
   // npm install only when dependencies changed (saves 1-3 s on every launch)
-  const sig = (() => { try { return fs.readFileSync(path.join(defaultRoot, "package-lock.json"), "utf8").length + ":" + fs.statSync(path.join(defaultRoot, "package.json")).size; } catch { return ""; } })();
+  const sig = (() => { try { return crypto.createHash("sha1").update(fs.readFileSync(path.join(defaultRoot, "package-lock.json"))).update(fs.readFileSync(path.join(defaultRoot, "package.json"))).digest("hex"); } catch { return ""; } })();
   const stamp = path.join(defaultRoot, "node_modules", ".claudeshape-deps");
   const had = (() => { try { return fs.readFileSync(stamp, "utf8"); } catch { return null; } })();
   if (had !== sig) {

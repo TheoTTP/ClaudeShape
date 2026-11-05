@@ -137,12 +137,13 @@ async function send(text,imgs=[]){
   const think=step("Thinking");think.className="step dots";
   try{
     const r=await fetch("/chat",{method:"POST",headers:H,body:JSON.stringify({prompt:text,session,images:imgs.map(({media_type,data})=>({media_type,data}))})});
+    if(!r.ok){let m="Could not send that ("+r.status+").";try{const j=await r.json();if(j.error)m=j.error}catch{}throw new Error(m)}
     const rd=r.body.getReader(),dec=new TextDecoder();let buf="",ai=null,final=null;
     for(;;){const{value,done}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
       while((i=buf.indexOf("\n"))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line.trim())continue;let e;try{e=JSON.parse(line)}catch{continue}
         if(e.session_id)session=e.session_id;
         // the document link appears the moment Claude's tools create it, so you can watch it build
-        if(!openBtn){const m=line.match(ONSHAPE);if(m){openBtn=document.createElement("a");openBtn.className="open early";openBtn.href=m[0];openBtn.target="_blank";openBtn.rel="noopener";openBtn.textContent="Open in Onshape ↗";timer.after(openBtn)}}
+        if(!openBtn&&e.type==="user"){const m=line.match(ONSHAPE);if(m){openBtn=document.createElement("a");openBtn.className="open early";openBtn.href=m[0];openBtn.target="_blank";openBtn.rel="noopener";openBtn.textContent="Open in Onshape ↗";timer.after(openBtn)}}
         {const m=line.match(/sketches\\?"\s*:\s*\\?"([^"\\]+)/);if(m)sketchNote=m[1]}
         for(const m of line.matchAll(/rate_limited_s\\?"\s*:\s*([0-9.]+)/g))rateWait+=+m[1];
         {const m=line.match(/slowest\\?"\s*:\s*\\?"([^"\\]+)/);if(m)slowest=m[1]}
@@ -168,6 +169,6 @@ async function send(text,imgs=[]){
   go.disabled=false;p.focus();
 }
 document.getElementById("f").onsubmit=e=>{e.preventDefault();const t=p.value.trim();if(!t||go.disabled)return;p.value="";const imgs=attached;attached=[];paintThumbs();send(t,imgs)};
-p.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();document.getElementById("f").requestSubmit()}});
+p.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();document.getElementById("f").requestSubmit()}});
 document.getElementById("new").onclick=async()=>{session=null;await fetch("/reset",{method:"POST",headers:H});location.reload()};
 </script></body></html>

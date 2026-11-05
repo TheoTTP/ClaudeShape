@@ -24,7 +24,7 @@ Write-Host "==> Downloading ClaudeShape"
 if (Test-Path (Join-Path $Dir ".git")) {
   git -C $Dir fetch -q origin $Ref; git -C $Dir stash -q; git -C $Dir checkout -q -B $Ref FETCH_HEAD
 } else { git clone -q -b $Ref $Repo $Dir }
-Push-Location $Dir; npm install --silent
+Push-Location $Dir; npm.cmd install --silent
 New-Item -ItemType File -Force -Path (Join-Path $Dir ".git\claudeshape-managed") | Out-Null   # friend install: updates always win
 Write-Host "==> Looking for Claude"
 $found = (node lib/claude-bin.js --check)

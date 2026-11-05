@@ -20,7 +20,11 @@ assert.equal(update(friend), "up to date"); assert.equal(head(friend), head(orig
 // 2. local edits don't block updating
 fs.writeFileSync(path.join(friend, "v.txt"), "scribble");
 commit("v.txt", "3", "v3");
-assert.equal(update(friend), "up to date"); assert.equal(fs.readFileSync(path.join(friend, "v.txt"), "utf8"), "3");
+assert.equal(update(friend), "local changes (left alone)");          // a dev copy keeps its uncommitted edits
+assert.equal(fs.readFileSync(path.join(friend, "v.txt"), "utf8"), "scribble");
+fs.writeFileSync(path.join(friend, ".git", "claudeshape-managed"), "");   // a friend's install is updated regardless
+assert.equal(update(friend), "up to date");
+fs.rmSync(path.join(friend, ".git", "claudeshape-managed")); assert.equal(fs.readFileSync(path.join(friend, "v.txt"), "utf8"), "3");
 // 3. diverged: dev copy left alone, friend install reset
 fs.writeFileSync(path.join(friend, "mine.txt"), "x"); sh("git add -A && git commit -qm mine", friend);
 commit("v.txt", "4", "v4");
