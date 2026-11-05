@@ -18,7 +18,13 @@ const PORT = Number(process.env.CLAUDESHAPE_PORT || 4567);
 const URL_ = `http://127.0.0.1:${PORT}`;
 const IDLE_MS = 45_000;
 // Fast mode uses the quicker model, Review mode the stronger one. Override with CLAUDESHAPE_FAST_MODEL / CLAUDESHAPE_MODEL.
-const MODELS = { fast: process.env.CLAUDESHAPE_FAST_MODEL || "haiku", review: process.env.CLAUDESHAPE_MODEL || "sonnet" };
+const MODELS = { main: process.env.CLAUDESHAPE_MODEL || "sonnet", turbo: process.env.CLAUDESHAPE_TURBO_MODEL || "haiku" };
+// Fast and Review share one Claude process (same model, shared context); Turbo uses the quickest model in its own.
+const MODES = {
+  fast: { model: MODELS.main, hint: "\n\n(Fast mode)" },
+  turbo: { model: MODELS.turbo, hint: "\n\n(Fast mode)" },
+  review: { model: MODELS.main, hint: "\n\n(Review mode)" },
+};
 // Extended thinking is the biggest per-message delay; off by default (set CLAUDESHAPE_THINKING=4000 to allow some).
 const CHILD_ENV = { ...process.env, MAX_THINKING_TOKENS: process.env.CLAUDESHAPE_THINKING ?? "0" };
 
@@ -101,7 +107,7 @@ app.post("/keys", async (req, res) => {
 });
 
 // Streams Claude Code's JSON events (one per line) to the window.
-function legacyChat(res, prompt, session, mode = "fast") {
+function legacyChat(res, prompt, session, model = MODES.fast.model) {
   const base = [
     "-p", prompt, "--output-format", "stream-json", "--verbose",
     "--allowedTools", "mcp__claudeshape", "--disallowedTools", "Bash,Edit,Write,NotebookEdit,WebFetch",
@@ -109,7 +115,7 @@ function legacyChat(res, prompt, session, mode = "fast") {
     ...(session ? ["--resume", session] : []),
   ];
   // Usage savers. If this Claude Code version rejects one, retry once without them.
-  const lean = ["--model", MODELS[mode], "--strict-mcp-config", "--mcp-config", MCP_CONFIG, "--tools", "", "--disable-slash-commands", "--max-turns", "40"];
+  const lean = ["--model", model, "--strict-mcp-config", "--mcp-config", MCP_CONFIG, "--tools", "", "--disable-slash-commands", "--max-turns", "40"];
   let killed = false, cur = null;
   const bins = claudeCandidates();
   if (!bins.length) bins.push("claude");
@@ -148,9 +154,9 @@ function legacyChat(res, prompt, session, mode = "fast") {
 // Fast starts when the window opens so the first message skips start-up; Review starts the first time it is used.
 // If a worker misbehaves we fall back to one process per message.
 const BASE_FLAGS = ["--allowedTools", "mcp__claudeshape", "--disallowedTools", "Bash,Edit,Write,NotebookEdit,WebFetch", "--append-system-prompt", SYSTEM];
-const leanFlags = (mode) => ["--model", MODELS[mode], "--strict-mcp-config", "--mcp-config", MCP_CONFIG, "--tools", "", "--disable-slash-commands", "--max-turns", "40"];
+const leanFlags = (model) => ["--model", model, "--strict-mcp-config", "--mcp-config", MCP_CONFIG, "--tools", "", "--disable-slash-commands", "--max-turns", "40"];
 let persistOk = process.env.CLAUDESHAPE_PERSIST !== "0";
-const workers = { fast: null, review: null };
+const workers = {};   // one per model
 let lastSession = null;
 const anyBusy = () => Object.values(workers).some((w) => w?.busy);
 const killWorkers = () => { for (const m of Object.keys(workers)) { try { workers[m]?.child.kill(); } catch {} workers[m] = null; } };
@@ -179,7 +185,7 @@ function startWorker(mode, lean = true, bi = 0) {
   });
   return w;
 }
-function prewarm(mode = "fast") { if (persistOk && (!workers[mode] || workers[mode].dead)) startWorker(mode); }
+function prewarm(mode = MODES.fast.model) { if (persistOk && (!workers[mode] || workers[mode].dead)) startWorker(mode); }
 
 // Resolves true if the worker handled the request (or reported a failure), false if the caller should fall back.
 function viaWorker(res, prompt, mode) {
@@ -216,12 +222,11 @@ function viaWorker(res, prompt, mode) {
   });
 }
 
-const MODE_HINT = { fast: "\n\n(Fast mode)", review: "\n\n(Review mode)" };
 let freshConversation = true;
 app.post("/chat", async (req, res) => {
   const { session } = req.body || {};
-  const mode = req.body?.mode === "review" ? "review" : "fast";
-  const prompt = typeof req.body?.prompt === "string" ? req.body.prompt + MODE_HINT[mode] : "";
+  const M = MODES[req.body?.mode] || MODES.fast;
+  const prompt = typeof req.body?.prompt === "string" ? req.body.prompt + M.hint : "";
   if (!prompt?.trim()) return res.status(400).json({ error: "empty prompt" });
   if (anyBusy()) return res.status(409).json({ error: "Still working on the last message." });
   res.setHeader("Content-Type", "application/x-ndjson");
@@ -229,11 +234,11 @@ app.post("/chat", async (req, res) => {
   res.flushHeaders();
   // First message of a conversation: make the Onshape document now, while Claude is still thinking.
   if (freshConversation) { freshConversation = false; const k = loadKeys(); if (k) precreate(new Onshape(k)); }
-  if (persistOk && await viaWorker(res, prompt, mode)) return;
-  legacyChat(res, prompt, session || lastSession, mode);
+  if (persistOk && await viaWorker(res, prompt, M.model)) return;
+  legacyChat(res, prompt, session || lastSession, M.model);
 });
 
-app.post("/reset", (_req, res) => { killWorkers(); clearAll(); freshConversation = true; prewarm("fast"); res.json({ ok: true }); });
+app.post("/reset", (_req, res) => { killWorkers(); clearAll(); freshConversation = true; prewarm(); res.json({ ok: true }); });
 process.on("exit", () => killWorkers());
 
 const server = app.listen(PORT, "127.0.0.1", (err) => {
@@ -241,7 +246,7 @@ const server = app.listen(PORT, "127.0.0.1", (err) => {
   console.log(`ClaudeShape window on ${URL_}`);
   openWindow();
   clearAll();                                                  // a new window is a new conversation
-  prewarm("fast");                                             // start Claude now so the first message is fast
+  prewarm();                                             // start Claude now so the first message is fast
   const k = loadKeys(); if (k) new Onshape(k).whoami().catch(() => {});   // warm the Onshape connection (TLS, auth)
   // Quit when the window is closed (it pings every 10 s).
   setInterval(() => { if (Date.now() - lastPing > IDLE_MS) process.exit(0); }, 5000).unref?.();

@@ -151,3 +151,15 @@ console.log("round/preview tests passed");
   assert.match((await runTool(os, {}, "build_steps", { steps: [{ tool: "holes", input: { d: 5 } }] })).error, /holes needs/);
 }
 console.log("macro tests passed");
+
+// ---- timing: every Onshape call is timed so we can see what is slow ----
+{
+  const { timedOs, takeTimings } = await import("../lib/agent.js");
+  const base = { addFeature: async () => { await new Promise((r) => setTimeout(r, 30)); return { feature: { featureId: "F" }, featureState: { featureStatus: "OK" } }; }, getBoundingBox: async () => ({ lowX: 0, lowY: 0, lowZ: 0, highX: 0.01, highY: 0.01, highZ: 0.01 }), deleteFeature: async () => ({}) };
+  takeTimings();
+  await runTool(timedOs(base), {}, "build_steps", { steps: [{ tool: "box", input: { width: 10, depth: 10, height: 5 } }] });
+  const t = takeTimings();
+  assert.deepEqual(t.map((x) => x.call), ["add newSketch", "add extrude", "getBoundingBox"]);
+  assert.ok(t[0].ms >= 25); assert.deepEqual(takeTimings(), []);
+}
+console.log("timing tests passed");

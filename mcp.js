@@ -4,9 +4,20 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { Onshape } from "./lib/onshape.js";
-import { tools, runTool, DESIGN_RULES } from "./lib/agent.js";
+import { tools, runTool, DESIGN_RULES, timedOs, takeTimings } from "./lib/agent.js";
+import fs from "node:fs";
+import os_ from "node:os";
+import path from "node:path";
 import { loadKeys } from "./lib/config.js";
 import { BASE, urlOf, createDocumentWithStudio, takePending, saveCtx, loadCtx } from "./lib/doc.js";
+
+const LOG = path.join(os_.homedir(), ".claudeshape-timing.log");
+function logTiming(tool, total, calls) {
+  try {
+    if (fs.existsSync(LOG) && fs.statSync(LOG).size > 200_000) fs.writeFileSync(LOG, "");
+    fs.appendFileSync(LOG, `${new Date().toISOString()} ${tool} total=${total}ms ${calls.map((c) => `${c.call}=${c.ms}`).join(" ")}\n`);
+  } catch {}
+}
 
 let ctx = loadCtx(); // current {did, wid, eid}; shared with the other Claude worker through a small file
 const setCtx = (c) => { ctx = c; saveCtx(c); };
@@ -46,11 +57,15 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: input = {} } = req.params;
   const t0 = Date.now();
   { const cur = loadCtx(); if (cur) ctx = cur; }                 // the other Claude worker may have switched document
-  const ms = () => ({ onshape_ms: Date.now() - t0 });            // lets the window show how long Onshape took
+  const ms = () => {                                              // lets the window show how long Onshape took
+    const calls = takeTimings(), total = Date.now() - t0, slow = calls.reduce((m, c) => (c.ms > m.ms ? c : m), { ms: 0 });
+    logTiming(name, total, calls);
+    return { onshape_ms: total, ...(slow.ms >= 1500 ? { slowest: `${slow.call} ${Math.round(slow.ms / 1000)}s` } : {}) };
+  };
   const reply = (o, isError) => ({ content: [{ type: "text", text: typeof o === "string" ? o : JSON.stringify(Array.isArray(o) ? { items: o, ...ms() } : { ...o, ...ms() }) }], isError });
   const keys = loadKeys();
   if (!keys) return reply("ClaudeShape has no Onshape API keys yet. Ask the user to run `npm run setup` in the ClaudeShape folder (one-time, 1 minute).", true);
-  const os = new Onshape(keys);
+  const os = timedOs(new Onshape(keys));
   try {
     if (name === "list_documents") {
       const r = await os.listDocuments(input.query);

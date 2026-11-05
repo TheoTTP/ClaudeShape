@@ -73,12 +73,13 @@ const last = (ev) => ev.at(-1);
   const a = await s.chat("x"); assert.equal(last(a).type, "result"); assert.equal(last(a).lean, false);
   s.srv.kill();
 }
-// 4b. Fast and Review use different models, each in its own long-lived process
+// 4b. modes: Fast and Review share one process (same model, shared context); Turbo is its own, with the quickest model
 {
   const s = await server();
-  const f = last(await s.post("/chat", { prompt: "x", mode: "fast" })), r = last(await s.post("/chat", { prompt: "x", mode: "review" }));
-  assert.equal(f.model, "haiku"); assert.equal(r.model, "sonnet"); assert.notEqual(f.pid, r.pid);
-  assert.equal(last(await s.post("/chat", { prompt: "y", mode: "fast" })).pid, f.pid);        // Fast worker reused
+  const f = last(await s.post("/chat", { prompt: "x", mode: "fast" })), r = last(await s.post("/chat", { prompt: "y", mode: "review" })), t = last(await s.post("/chat", { prompt: "z", mode: "turbo" }));
+  assert.equal(f.model, "sonnet"); assert.equal(r.model, "sonnet"); assert.equal(t.model, "haiku");
+  assert.equal(f.pid, r.pid); assert.notEqual(f.pid, t.pid);
+  assert.equal(r.got, "y\n\n(Review mode)"); assert.equal(t.got, "z\n\n(Fast mode)");
   s.srv.kill();
 }
 // 4c. the Onshape document is created as soon as the first message arrives (not for follow-ups)
