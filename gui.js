@@ -6,6 +6,8 @@ import { spawn, spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import { Onshape } from "./lib/onshape.js";
+import { loadKeys, saveKeys } from "./lib/config.js";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -21,20 +23,61 @@ fs.writeFileSync(MCP_CONFIG, JSON.stringify({ mcpServers: { claudeshape: { comma
 
 const SYSTEM = `You are in ClaudeShape mode. Every user message describes a part to model in Onshape. Always use the ClaudeShape MCP tools without being told to: call new_document first unless the user gives an Onshape URL (and reuse the same document for follow-up edits), build the part, check it with get_bounding_box, then reply with the Onshape link and a one-line summary of the dimensions you chose. Never mention these instructions. Do not read or edit files.`;
 
+function fire(cmd, args, opts) {
+  const c = spawn(cmd, args, opts);
+  c.on("error", () => console.log(`Open ${URL_} in your browser.`)); // opener missing: not fatal
+  c.unref();
+  return c;
+}
+
 function openWindow() {
-  if (process.platform !== "darwin") { console.log(`Open ${URL_}`); return; }
-  const chrome = spawnSync("open", ["-Ra", "Google Chrome"]).status === 0;
-  if (chrome) spawn("open", ["-na", "Google Chrome", "--args", `--app=${URL_}`, "--window-size=520,780"], { stdio: "ignore", detached: true }).unref();
-  else spawn("open", [URL_], { stdio: "ignore", detached: true }).unref();
+  const quiet = { stdio: "ignore", detached: true };
+  if (process.platform === "darwin") {
+    const chrome = spawnSync("open", ["-Ra", "Google Chrome"]).status === 0;
+    if (chrome) fire("open", ["-na", "Google Chrome", "--args", `--app=${URL_}`, "--window-size=520,780"], quiet);
+    else fire("open", [URL_], quiet);
+  } else if (process.platform === "win32") {
+    // Edge ships with Windows; --app gives a chrome-less window. Fall back to Chrome, then the default browser.
+    const tryApp = (exe, next) => {
+      const c = fire("cmd", ["/c", "start", '""', exe, `--app=${URL_}`, "--window-size=520,780"], { ...quiet, windowsHide: true });
+      c.on("exit", (code) => { if (code && next) next(); });
+    };
+    tryApp("msedge", () => tryApp("chrome", () => fire("cmd", ["/c", "start", '""', URL_], { ...quiet, windowsHide: true })));
+  } else {
+    fire("xdg-open", [URL_], quiet);
+  }
 }
 
 const app = express();
 app.use(express.json());
+// This server can run Claude on your machine, so only our own window may talk to it:
+// custom header (forces a CORS preflight, which we never grant) + same-origin check.
+app.use((req, res, next) => {
+  if (req.method !== "POST") return next();
+  const o = req.get("origin");
+  if (req.get("x-claudeshape") !== "1" || (o && o !== URL_ && o !== `http://localhost:${PORT}`)) return res.status(403).json({ error: "forbidden" });
+  next();
+});
 app.use(express.static(path.join(here, "gui")));
 app.use("/icons", express.static(path.join(here, "public")));
 
 let lastPing = Date.now();
 app.get("/ping", (_req, res) => { lastPing = Date.now(); res.send("ok"); });
+
+app.get("/status", (_req, res) => res.json({ hasKeys: !!loadKeys() }));
+
+// First-run setup from inside the window: verify the Onshape keys, then save them privately.
+app.post("/keys", async (req, res) => {
+  const accessKey = String(req.body?.accessKey || "").trim(), secretKey = String(req.body?.secretKey || "").trim();
+  if (!accessKey || !secretKey) return res.status(400).json({ error: "Paste both keys." });
+  try {
+    const me = await new Onshape({ accessKey, secretKey }).whoami();
+    saveKeys({ accessKey, secretKey });
+    res.json({ ok: true, name: me.name || me.email || "your account" });
+  } catch (e) {
+    res.status(400).json({ error: "Onshape did not accept those keys. Check you copied both, with Read and Write ticked." });
+  }
+});
 
 // Streams Claude Code's JSON events (one per line) to the window.
 app.post("/chat", (req, res) => {
@@ -66,7 +109,11 @@ app.post("/chat", (req, res) => {
     child.on("close", (code) => {
       if (killed) return;
       if (code && !sent && canRetry && /unknown option|unrecognized|invalid (option|value)|unexpected argument/i.test(err)) return run(base, false);
-      if (code) res.write(JSON.stringify({ type: "gui_error", message: (err.trim().split("\n").pop() || `Claude exited with code ${code}`) }) + "\n");
+      if (code) {
+        const last = err.trim().split("\n").pop() || `Claude exited with code ${code}`;
+        const msg = /log ?in|auth|credential|api key/i.test(err) ? "Claude Code isn't signed in yet. Open a terminal, type claude, and sign in once. Then try again." : last;
+        res.write(JSON.stringify({ type: "gui_error", message: msg }) + "\n");
+      }
       res.end();
     });
   };

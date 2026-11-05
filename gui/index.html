@@ -24,15 +24,35 @@
   textarea{flex:1;resize:none;height:48px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--fg);font:inherit}
   #go{border:0;background:var(--acc);color:#fff;border-radius:12px;padding:0 18px;font-weight:600;cursor:pointer}
   #go:disabled{opacity:.5}
+  #setup{margin:auto;max-width:380px;text-align:left}
+  #setup h2{margin:0 0 6px}#setup ol{padding-left:20px;color:var(--mut);margin:8px 0 14px}
+  #setup input{width:100%;padding:10px 12px;margin:0 0 8px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--fg);font:inherit}
+  #setup a{color:var(--acc)}#setup button{border:0;background:var(--acc);color:#fff;border-radius:10px;padding:9px 18px;font-weight:600;cursor:pointer}
   .dots::after{content:"";animation:d 1.2s steps(4) infinite}@keyframes d{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
 </style></head><body>
 <header><img src="/icons/icon-64.png" alt=""><b>ClaudeShape</b><button id="new">New part</button></header>
 <div id="log"><div class="hero" id="hero"><img src="/icons/icon-256.png" alt="">
   <div>What do you want to make?</div></div></div>
+<div id="setup" style="display:none"><h2>One-time setup</h2>
+  <div style="color:var(--mut)">ClaudeShape needs a key so it can edit your Onshape documents.</div>
+  <ol><li>Open <a href="https://dev-portal.onshape.com/keys" target="_blank">Onshape API keys</a> (or My account &gt; Developer &gt; API keys) and click <b>Create new API key</b>.</li>
+  <li>Tick <b>read profile, read documents, write documents</b> and create it.</li>
+  <li>Paste both values here. They stay on this computer.</li></ol>
+  <input id="ak" placeholder="Access key" autocomplete="off"><input id="sk" type="password" placeholder="Secret key" autocomplete="off">
+  <button id="savekeys">Save</button> <span id="keymsg" class="err"></span></div>
 <form id="f"><textarea id="p" placeholder="Describe a part…" autofocus></textarea><button id="go">Build</button></form>
 <script>
 const log=document.getElementById("log"),p=document.getElementById("p"),go=document.getElementById("go");
 let session=null;
+const H={"Content-Type":"application/json","x-claudeshape":"1"};
+async function checkKeys(){const s=await (await fetch("/status")).json();
+  document.getElementById("setup").style.display=s.hasKeys?"none":"block";
+  document.getElementById("log").style.display=s.hasKeys?"flex":"none";
+  document.getElementById("f").style.display=s.hasKeys?"flex":"none"}
+document.getElementById("savekeys").onclick=async()=>{const m=document.getElementById("keymsg");m.textContent="";
+  const r=await fetch("/keys",{method:"POST",headers:H,body:JSON.stringify({accessKey:document.getElementById("ak").value,secretKey:document.getElementById("sk").value})});
+  const j=await r.json();if(j.ok){document.getElementById("sk").value="";checkKeys()}else m.textContent=j.error};
+checkKeys();
 setInterval(()=>fetch("/ping").catch(()=>{}),10000);fetch("/ping");
 const FRIENDLY={new_document:"Creating a document",create_sketch:"Drawing a sketch",extrude:"Extruding",revolve:"Revolving",fillet:"Rounding edges",chamfer:"Chamfering",offset_plane:"Adding a plane",linear_pattern:"Making a pattern",circular_pattern:"Making a pattern",find_faces:"Finding faces",get_bounding_box:"Checking size",delete_feature:"Undoing a step",list_features:"Reviewing the model",open_document:"Opening the document",list_documents:"Looking up documents"};
 function bubble(cls,text){document.getElementById("hero")?.remove();const d=document.createElement("div");d.className="b "+cls;d.textContent=text;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
@@ -44,7 +64,7 @@ function render(el,text){el.textContent="";const re=/(https:\/\/cad\.onshape\.co
 async function send(text){
   go.disabled=true;bubble("me",text);const think=step("Thinking");think.className="step dots";
   try{
-    const r=await fetch("/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:text,session})});
+    const r=await fetch("/chat",{method:"POST",headers:H,body:JSON.stringify({prompt:text,session})});
     const rd=r.body.getReader(),dec=new TextDecoder();let buf="",ai=null,final=null;
     for(;;){const{value,done}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
       while((i=buf.indexOf("\n"))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line.trim())continue;let e;try{e=JSON.parse(line)}catch{continue}
