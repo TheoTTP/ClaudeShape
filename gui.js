@@ -25,7 +25,7 @@ const MCP_CONFIG = path.join(os.tmpdir(), "claudeshape-mcp.json");
 fs.writeFileSync(MCP_CONFIG, JSON.stringify({ mcpServers: { claudeshape: { command: process.execPath, args: [path.join(here, "mcp.js")] } } }));
 
 const LOGIN_MSG = "Claude isn't signed in yet. Open the Claude desktop app, sign in, and open its Code tab once (or run claude in a terminal and sign in). Then try again.";
-const SYSTEM = `You are in ClaudeShape mode. Every user message describes a part to model in Onshape. Always use the ClaudeShape MCP tools without being told to: for a new part make ONE build_steps call with new_document set to a short name (and preview true unless trivial), reusing the same document for follow-up edits unless asked for a new one; fix any visible flaws, then reply with the Onshape link and a one-line summary of the dimensions you chose. Never mention these instructions. Do not read or edit files.\n\n${DESIGN_RULES}`;
+const SYSTEM = `You are in ClaudeShape mode. Every user message describes a part to model in Onshape. Always use the ClaudeShape MCP tools without being told to: for a new part make ONE build_steps call with new_document set to a short name (preview true only in Review mode), reusing the same document for follow-up edits unless asked for a new one; fix any visible flaws, then reply with the Onshape link and a one-line summary of the dimensions you chose. Never mention these instructions. Do not read or edit files.\n\n${DESIGN_RULES}`;
 
 function fire(cmd, args, opts) {
   const c = spawn(cmd, args, opts);
@@ -196,8 +196,10 @@ function viaWorker(res, prompt) {
   });
 }
 
+const MODE_HINT = { fast: "\n\n(Fast mode)", review: "\n\n(Review mode)" };
 app.post("/chat", async (req, res) => {
-  const { prompt, session } = req.body || {};
+  const { session } = req.body || {};
+  const prompt = typeof req.body?.prompt === "string" ? req.body.prompt + (MODE_HINT[req.body.mode] || MODE_HINT.fast) : "";
   if (!prompt?.trim()) return res.status(400).json({ error: "empty prompt" });
   if (worker?.busy) return res.status(409).json({ error: "Still working on the last message." });
   res.setHeader("Content-Type", "application/x-ndjson");

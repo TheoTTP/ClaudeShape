@@ -46,8 +46,9 @@ const last = (ev) => ev.at(-1);
   const s = await server();
   assert.match(await (await fetch(`http://127.0.0.1:${s.p}/`)).text(), /ClaudeShape/);
   const a = last(await s.chat("a ball")), b = last(await s.chat("make it bigger"));
-  assert.equal(a.mode, "persistent"); assert.equal(a.lean, true); assert.equal(a.got, "a ball");
-  assert.equal(b.turn, 2); assert.equal(b.pid, a.pid);
+  assert.equal(a.mode, "persistent"); assert.equal(a.lean, true); assert.equal(a.got, "a ball\n\n(Fast mode)");
+  assert.equal(last(await s.post("/chat", { prompt: "x", mode: "review" })).got, "x\n\n(Review mode)");
+  assert.equal(a.turn, 1); assert.equal(b.turn, 2); assert.equal(b.pid, a.pid);
   // reset starts a fresh process
   await s.post("/reset", {}); await new Promise((r) => setTimeout(r, 500));
   const c = last(await s.chat("new part")); assert.equal(c.turn, 1); assert.notEqual(c.pid, a.pid);

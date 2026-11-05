@@ -9,7 +9,8 @@
   body{margin:0;height:100vh;display:flex;flex-direction:column;font:15px/1.5 -apple-system,system-ui,sans-serif;background:var(--bg);color:var(--fg)}
   header{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);-webkit-app-region:drag}
   header img{height:26px}header b{font-size:16px}
-  header button{margin-left:auto;border:1px solid var(--line);background:none;color:var(--mut);border-radius:8px;padding:4px 10px;cursor:pointer}
+  header #mode{margin-left:auto}header #new{margin-left:0}
+  header button{border:1px solid var(--line);background:none;color:var(--mut);border-radius:8px;padding:4px 10px;cursor:pointer}
   #log{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
   .b{max-width:88%;padding:10px 14px;border-radius:14px;white-space:pre-wrap;word-wrap:break-word}
   .me{align-self:flex-end;background:var(--acc);color:#fff;border-bottom-right-radius:4px}
@@ -34,7 +35,7 @@
   #setup a{color:var(--acc)}#setup button{border:0;background:var(--acc);color:#fff;border-radius:10px;padding:9px 18px;font-weight:600;cursor:pointer}
   .dots::after{content:"";animation:d 1.2s steps(4) infinite}@keyframes d{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
 </style></head><body>
-<header><img src="/icons/icon-64.png" alt=""><b>ClaudeShape</b><small id="ver" style="color:var(--mut)"></small><button id="new">New part</button></header>
+<header><img src="/icons/icon-64.png" alt=""><b>ClaudeShape</b><small id="ver" style="color:var(--mut)"></small><button id="mode" title="Fast: build and answer. Review: also looks at a picture and fixes flaws (slower).">⚡ Fast</button><button id="new">New part</button></header>
 <div id="log"><div class="hero" id="hero"><img src="/icons/icon-256.png" alt="">
   <div>What do you want to make?</div></div></div>
 <div id="setup" style="display:none"><h2>One-time setup</h2>
@@ -48,6 +49,9 @@
 <script>
 const log=document.getElementById("log"),p=document.getElementById("p"),go=document.getElementById("go");
 let session=null;
+let mode=(()=>{try{return localStorage.getItem("cs_mode")==="review"?"review":"fast"}catch{return"fast"}})();
+const modeBtn=document.getElementById("mode"),paintMode=()=>modeBtn.textContent=mode==="fast"?"⚡ Fast":"🔍 Review";paintMode();
+modeBtn.onclick=()=>{mode=mode==="fast"?"review":"fast";try{localStorage.setItem("cs_mode",mode)}catch{}paintMode()};
 const H={"Content-Type":"application/json","x-claudeshape":"1"};
 async function checkKeys(){const s=await (await fetch("/status")).json();document.getElementById("ver").textContent=s.version?"v"+s.version:"";
   document.getElementById("setup").style.display=s.hasKeys?"none":"block";
@@ -96,10 +100,10 @@ async function send(text){
   // timer line at the top of the response: ticks while working, then reads "Done in …"
   const t0=performance.now(),timer=step("Working… 0s");timer.className="timing";
   const tick=setInterval(()=>{timer.textContent="Working… "+fmtTime(performance.now()-t0)},1000);
-  let failed=false;
+  let failed=false,detail="";
   const think=step("Thinking");think.className="step dots";
   try{
-    const r=await fetch("/chat",{method:"POST",headers:H,body:JSON.stringify({prompt:text,session})});
+    const r=await fetch("/chat",{method:"POST",headers:H,body:JSON.stringify({prompt:text,session,mode})});
     const rd=r.body.getReader(),dec=new TextDecoder();let buf="",ai=null,final=null;
     for(;;){const{value,done}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
       while((i=buf.indexOf("\n"))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line.trim())continue;let e;try{e=JSON.parse(line)}catch{continue}
@@ -107,14 +111,14 @@ async function send(text){
         if(e.type==="assistant"){for(const c of e.message?.content||[]){
           if(c.type==="tool_use"){think.remove();const n=c.name.replace(/^mcp__claudeshape__/,"");step("• "+(FRIENDLY[n]||n)+"…")}
           if(c.type==="text"&&c.text.trim()){think.remove();ai=ai||bubble("ai","");ai.dataset.t=(ai.dataset.t?ai.dataset.t+"\n\n":"")+c.text.trim();render(ai,ai.dataset.t)}}}
-        if(e.type==="result"){final=e.result;if(e.is_error){failed=true;bubble("ai err",e.result||"Something went wrong.")}}
+        if(e.type==="result"){final=e.result;if(e.duration_api_ms!=null){const api=fmtTime(e.duration_api_ms),turns=e.num_turns;detail=` · Claude ${api}${turns?` · ${turns} turn${turns>1?"s":""}`:""}`}if(e.is_error){failed=true;bubble("ai err",e.result||"Something went wrong.")}}
         if(e.type==="gui_error"){failed=true;bubble("ai err",e.message)}
       }}
     think.remove();
     if(final&&!ai)render(bubble("ai",""),final);
   }catch(err){failed=true;think.remove();bubble("ai err",err.message)}
   clearInterval(tick);
-  timer.textContent=(failed?"Stopped after ":"Done in ")+fmtTime(performance.now()-t0);timer.classList.add(failed?"bad":"ok");
+  timer.textContent=(failed?"Stopped after ":"Done in ")+fmtTime(performance.now()-t0)+(failed?"":detail);timer.classList.add(failed?"bad":"ok");
   go.disabled=false;p.focus();
 }
 document.getElementById("f").onsubmit=e=>{e.preventDefault();const t=p.value.trim();if(!t||go.disabled)return;p.value="";send(t)};
