@@ -10,7 +10,7 @@ import os_ from "node:os";
 import path from "node:path";
 import { loadKeys } from "./lib/config.js";
 import { loadLearned, loadLoft } from "./lib/learn.js";
-import { setLearned, setLoftTemplate } from "./lib/onshape.js";
+import { setLearned, setLoftTemplate, takeRateWait } from "./lib/onshape.js";
 import { applyRevolveCal, applyRegionCal } from "./lib/calib.js";
 import { BASE, urlOf, createDocumentWithStudio, takePending, saveCtx, loadCtx, clearCtx } from "./lib/doc.js";
 
@@ -81,7 +81,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const ms = () => {                                              // lets the window show how long Onshape took
     const calls = takeTimings(), total = Date.now() - t0, slow = calls.reduce((m, c) => (c.ms > m.ms ? c : m), { ms: 0 });
     logTiming(name, total, calls);
-    return { onshape_ms: total, ...(slow.ms >= 1500 ? { slowest: `${slow.call} ${Math.round(slow.ms / 1000)}s` } : {}) };
+    const rl = takeRateWait();
+    return { onshape_ms: total, ...(slow.ms >= 1500 ? { slowest: `${slow.call} ${Math.round(slow.ms / 1000)}s` } : {}), ...(rl > 0 ? { rate_limited_s: rl } : {}) };
   };
   const reply = (o, isError) => ({ content: [{ type: "text", text: typeof o === "string" ? o : JSON.stringify(Array.isArray(o) ? { items: o, ...ms() } : { ...o, ...ms() }) }], isError });
   const keys = loadKeys();

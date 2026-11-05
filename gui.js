@@ -234,6 +234,7 @@ app.post("/chat", async (req, res) => {
   res.flushHeaders();
   // First message of a conversation: make the Onshape document now, while Claude is still thinking.
   if (freshConversation) { freshConversation = false; const k = loadKeys(); if (k) precreate(new Onshape(k)); }
+  res.on("close", () => { lastChatEnd = Date.now(); });
   if (persistOk && await viaWorker(res, prompt, MODEL, images)) return;
   if (images.length) res.write(JSON.stringify({ type: "gui_error", message: "Reference images could not be sent this time (Claude restarted in a simpler mode). Describe it in words, or try again." }) + "\n");
   legacyChat(res, prompt, session || lastSession, MODEL);
@@ -245,18 +246,19 @@ process.on("exit", () => killWorkers());
 // One-off checks of how this Onshape behaves, run quietly in the background and shown in the window.
 const selfTest = { revolve: "waiting" };
 app.get("/selftest", (_req, res) => res.json(selfTest));
+let lastChatEnd = 0;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Background checks must never compete with a real build for Onshape's rate limit: wait until nothing has run for 20 s.
+async function idle() { while (anyBusy() || Date.now() - lastChatEnd < 20000) await sleep(2000); }
 async function selfTestAll(o) {
-  applyRevolveCal();
-  const done = applyRevolveCal();
-  if (done?.variant) selfTest.revolve = "ok";
-  else {
-    selfTest.revolve = "running";
-    try { selfTest.revolve = (await calibrateRevolve(o)) ? "ok" : "failed"; } catch { selfTest.revolve = "failed"; }
-  }
-  applyRegionCal();
-  try { await calibrateRegionPoint(o); } catch { /* fine: keeps one sketch per piece */ }     // can one sketch serve many revolves? (faster builds)
-  await learnLoft(o).catch(() => {});                            // how a loft's profile list is written
-  await learn(o).catch(() => {});                                // then Onshape's dimension format (slowly, once)
+  selfTest.revolve = "running";
+  try {
+    await idle(); applyRegionCal();
+    await calibrateRegionPoint(o);                               // can one sketch serve many revolves? (faster builds)
+  } catch { /* fine: keeps one sketch per piece */ }
+  try { await learnLoft(o, { idle }); } catch { /* the built-in loft format is used */ }       // how a loft's profile list is written
+  try { await learn(o, { idle }); } catch { /* sketches keep locked anchors */ }                // Onshape's dimension format (slowly, once)
+  selfTest.revolve = "ok";
 }
 
 const server = app.listen(PORT, "127.0.0.1", (err) => {

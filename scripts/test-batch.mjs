@@ -660,3 +660,37 @@ console.log("ellipse and spline tests passed");
   assert.throws(() => mk("w", [0, 1]), /axis must be/);
 }
 console.log("loft axis tests passed");
+
+// ---- cuts drawn on an origin plane go through both ways by default; macros keep their one-way cuts ----
+{
+  const posted = []; let n = 0;
+  const os = { addFeature: async (_c, f) => { posted.push(f); return { feature: { featureId: "F" + ++n }, featureState: { featureStatus: "OK" } }; }, deleteFeature: async () => ({}), getBoundingBox: async () => ({ lowX: 0, lowY: 0, lowZ: 0, highX: 0.01, highY: 0.01, highZ: 0.01 }) };
+  const ctx = { eid: "SYM" };
+  const end = (f) => f.parameters.find((q) => q.parameterId === "endBound").value;
+  const sk = await runTool(os, ctx, "create_sketch", { plane: "right", shapes: [{ type: "rectangle", width: 40, height: 30 }] });
+  await runTool(os, ctx, "extrude", { sketch_id: sk.featureId, depth: 100, operation: "intersect" });
+  assert.equal(end(posted.at(-1)), "SYMMETRIC", "intersect from the Right plane is symmetric by default");
+  await runTool(os, ctx, "extrude", { sketch_id: sk.featureId, depth: 100, operation: "remove", direction: "reverse" });
+  assert.equal(end(posted.at(-1)), "BLIND", "an explicit direction is respected");
+  await runTool(os, ctx, "extrude", { sketch_id: sk.featureId, depth: 100, operation: "new" });
+  assert.equal(end(posted.at(-1)), "BLIND", "new bodies are not changed");
+  const off = await runTool(os, ctx, "create_sketch", { plane: "feature:XYZ", shapes: [{ type: "circle", r: 3 }] });
+  await runTool(os, ctx, "extrude", { sketch_id: off.featureId, depth: 10, operation: "remove" });
+  assert.equal(end(posted.at(-1)), "BLIND", "only origin planes get the symmetric default");
+  // macros still cut one way (holes upward, cutouts into the wall)
+  posted.length = 0;
+  await runTool(os, ctx, "build_steps", { preview: false, steps: [{ tool: "holes", input: { d: 5, at: [[10, 10]], depth: 20 } }, { tool: "cutout", input: { face: "bottom", a: 1, b: 1, w: 5, h: 5 } }, { tool: "cutout", input: { face: "front", a: 1, b: 1, w: 5, h: 5 } }] });
+  assert.deepEqual(posted.filter((f) => f.featureType === "extrude").map(end), ["BLIND", "BLIND", "BLIND"]);
+  assert.equal(posted.filter((f) => f.featureType === "extrude").map((f) => f.parameters.find((q) => q.parameterId === "oppositeDirection")?.value)[2], true);   // the front cutout still reverses
+}
+console.log("symmetric cut tests passed");
+
+// ---- a rejected loft tells Claude exactly what to do instead ----
+{
+  const os = { addFeature: async () => { throw Object.assign(new Error("Onshape POST /api/v10/partstudios/.../features -> 400: Error processing json"), { status: 400 }); }, deleteFeature: async () => ({}) };
+  const err = await runTool(os, {}, "loft", { sketch_ids: ["A", "B"] }).catch((e) => e);
+  assert.match(err.message, /400/); assert.match(err.message, /do not retry/); assert.match(err.message, /operation intersect/);
+  const other = await runTool({ addFeature: async () => { throw Object.assign(new Error("Onshape POST -> 429: Too many requests"), { status: 429 }); } }, {}, "loft", { sketch_ids: ["A", "B"] }).catch((e) => e);
+  assert.ok(!/do not retry/.test(other.message), "other failures are not blamed on loft");
+}
+console.log("loft fallback tests passed");

@@ -208,3 +208,15 @@ console.log("shared sketch tests passed");
   calls = 0; assert.equal(await learnLoft({ request: async () => { calls++; return {}; } }, { pauseMs: 0 }), null); assert.equal(calls, 0);
 }
 console.log("loft learning tests passed");
+
+// ---- 6. rate-limit waits are counted so the window can say so ----
+{
+  const { takeRateWait } = await import("../lib/onshape.js");
+  takeRateWait();
+  tuning.backoffMs = 3; let c = 0;
+  globalThis.fetch = async () => { c++; return c <= 2 ? { status: 429, ok: false, headers: { get: () => null }, text: async () => "{}" } : { status: 200, ok: true, headers: { get: () => null }, text: async () => "{}" }; };
+  await new Onshape({ accessKey: "a", secretKey: "b" }).request("GET", "/api/x");
+  const w = takeRateWait(); assert.ok(w > 0, "it noted that it waited"); assert.equal(takeRateWait(), 0, "and reset the counter");
+  globalThis.fetch = realFetch;
+}
+console.log("rate limit wait tests passed");

@@ -74,7 +74,7 @@ document.getElementById("savekeys").onclick=async()=>{const m=document.getElemen
   const j=await r.json();if(j.ok){document.getElementById("sk").value="";checkKeys()}else m.textContent=j.error};
 checkKeys();
 (async function poll(){try{const t=await (await fetch("/selftest")).json();const el=document.getElementById("selftest");
-  el.textContent=t.revolve==="running"||t.revolve==="waiting"?"Checking how your Onshape handles curved parts…":t.revolve==="failed"?"Curved parts: Onshape ignored every angle format I tried, so curved sections are off (straight parts are fine).":"";
+  el.textContent=t.revolve==="running"||t.revolve==="waiting"?"Setting up (quietly, only while idle)…":"";
   if(t.revolve==="running"||t.revolve==="waiting")setTimeout(poll,5000)}catch{setTimeout(poll,8000)}})();
 setInterval(()=>fetch("/ping").catch(()=>{}),10000);fetch("/ping");
 const FRIENDLY={edit_feature:"Editing a feature",list_parts:"Checking the parts",style_part:"Naming and colouring parts",shell:"Hollowing out",mirror:"Mirroring",sweep:"Sweeping along a path",loft:"Lofting",WebSearch:"Searching the web",WebFetch:"Reading a web page",build_steps:"Building the model",preview:"Checking how it looks",new_document:"Creating a document",create_sketch:"Drawing a sketch",extrude:"Extruding",revolve:"Revolving",fillet:"Rounding edges",chamfer:"Chamfering",offset_plane:"Adding a plane",linear_pattern:"Making a pattern",circular_pattern:"Making a pattern",find_faces:"Finding faces",get_bounding_box:"Checking size",delete_feature:"Undoing a step",list_features:"Reviewing the model",open_document:"Opening the document",list_documents:"Looking up documents"};
@@ -133,7 +133,7 @@ async function send(text,imgs=[]){
   // timer line at the top of the response: ticks while working, then reads "Done in …"
   const t0=performance.now(),timer=step("Working… 0s");timer.className="timing";
   const tick=setInterval(()=>{timer.textContent="Working… "+fmtTime(performance.now()-t0)},1000);
-  let failed=false,problems=0,sketchNote="",gotResult=false,turnIds=new Set(),slowest="",detail="",openBtn=null,onshapeMs=0;
+  let rateWait=0,failed=false,problems=0,sketchNote="",gotResult=false,turnIds=new Set(),slowest="",detail="",openBtn=null,onshapeMs=0;
   const think=step("Thinking");think.className="step dots";
   try{
     const r=await fetch("/chat",{method:"POST",headers:H,body:JSON.stringify({prompt:text,session,images:imgs.map(({media_type,data})=>({media_type,data}))})});
@@ -144,6 +144,7 @@ async function send(text,imgs=[]){
         // the document link appears the moment Claude's tools create it, so you can watch it build
         if(!openBtn){const m=line.match(ONSHAPE);if(m){openBtn=document.createElement("a");openBtn.className="open early";openBtn.href=m[0];openBtn.target="_blank";openBtn.rel="noopener";openBtn.textContent="Open in Onshape ↗";timer.after(openBtn)}}
         {const m=line.match(/sketches\\?"\s*:\s*\\?"([^"\\]+)/);if(m)sketchNote=m[1]}
+        for(const m of line.matchAll(/rate_limited_s\\?"\s*:\s*([0-9.]+)/g))rateWait+=+m[1];
         {const m=line.match(/slowest\\?"\s*:\s*\\?"([^"\\]+)/);if(m)slowest=m[1]}
         for(const m of line.matchAll(/onshape_ms\\?"\s*:\s*(\d+)/g))onshapeMs+=+m[1];
         if(e.type==="user"&&problems<4){for(const c of e.message?.content||[]){if(c.type!=="tool_result")continue;
@@ -162,7 +163,7 @@ async function send(text,imgs=[]){
   }catch(err){failed=true;think.remove();bubble("ai err",err.message)}
   clearInterval(tick);
   if(sketchNote&&!/^\d+ fully defined$/.test(sketchNote)){const n=step("Sketches: "+sketchNote);n.className="step note";timer.after(n)}
-  if(gotResult){const total=performance.now()-t0;detail=" · Claude "+fmtTime(Math.max(0,total-onshapeMs))+(onshapeMs?" · Onshape "+fmtTime(onshapeMs)+(slowest?" (slowest: "+slowest+")":""):"")+(turnIds.size?" · "+turnIds.size+" turn"+(turnIds.size>1?"s":""):"")}
+  if(gotResult){const total=performance.now()-t0;detail=" · Claude "+fmtTime(Math.max(0,total-onshapeMs))+(onshapeMs?" · Onshape "+fmtTime(onshapeMs)+(slowest?" (slowest: "+slowest+")":""):"")+(turnIds.size?" · "+turnIds.size+" turn"+(turnIds.size>1?"s":""):"")+(rateWait>0?" · waited "+fmtTime(rateWait*1000)+" for Onshape's rate limit":"")}
   timer.textContent=(failed?"Stopped after ":"Done in ")+fmtTime(performance.now()-t0)+(failed?"":detail);timer.classList.add(failed?"bad":"ok");
   go.disabled=false;p.focus();
 }
